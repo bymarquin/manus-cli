@@ -77,7 +77,9 @@ class PollUntilSettledTests(unittest.TestCase):
         # aqui sem indicar regressão real — mesmo teto do teste irmão acima.
         self.assertLess(time.monotonic() - start, 2.0)
         self.assertGreater(observed[0], 0)
-        self.assertLessEqual(observed[0], 0.1)
+        # epsilon: `deadline - time.monotonic()` acumula ruído de ponto flutuante
+        # (observado 0.1 + ~2e-14 no Windows) sem overshoot real do orçamento.
+        self.assertLessEqual(observed[0], 0.1 + 1e-6)
 
     def test_missing_id_or_timestamp_skipped_without_crashing(self):
         client = MagicMock()

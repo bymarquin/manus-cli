@@ -133,7 +133,11 @@ def poll_until_settled(
                     request_timeout=remaining,
                 )
             except ManusAPIError:
-                if time.monotonic() >= deadline:
+                # Epsilon de 1ms: timer/sleep de SO (sobretudo Windows) tem granularidade
+                # grosseira o bastante pra acordar uma fração antes do deadline mesmo
+                # tendo consumido o orçamento inteiro — sem isso, um erro de rede bem na
+                # borda vazava cru em vez do TaskTimeoutError previsível.
+                if time.monotonic() >= deadline - 1e-3:
                     raise TaskTimeoutError(f"Tarefa {task_id} não concluiu em {timeout}s") from None
                 raise
             messages = data.get("messages") or []
