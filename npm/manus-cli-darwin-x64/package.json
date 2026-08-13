@@ -1,9 +1,13 @@
 {
   "name": "manus-cli-darwin-x64",
-  "version": "0.1.0",
-  "description": "Binário nativo do manus-cli para macOS (Intel / x64)",
-  "os": ["darwin"],
-  "cpu": ["x64"],
+  "version": "0.1.1",
+  "description": "Bin\u00e1rio nativo do manus-cli para macOS (Intel / x64)",
+  "os": [
+    "darwin"
+  ],
+  "cpu": [
+    "x64"
+  ],
   "files": [
     "bin",
     "LICENSE",

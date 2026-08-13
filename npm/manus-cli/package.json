@@ -1,7 +1,7 @@
 {
   "name": "manus-cli",
-  "version": "0.1.0",
-  "description": "CLI não-oficial para a API do Manus (v2) — launcher npm para o binário Python empacotado",
+  "version": "0.1.1",
+  "description": "CLI n\u00e3o-oficial para a API do Manus (v2) \u2014 launcher npm para o bin\u00e1rio Python empacotado",
   "bin": {
     "manus": "bin/manus.js"
   },
@@ -30,10 +30,10 @@
     "provenance": true
   },
   "optionalDependencies": {
-    "manus-cli-darwin-arm64": "0.1.0",
-    "manus-cli-darwin-x64": "0.1.0",
-    "manus-cli-linux-x64": "0.1.0",
-    "manus-cli-linux-arm64": "0.1.0",
-    "manus-cli-windows-x64": "0.1.0"
+    "manus-cli-darwin-arm64": "0.1.1",
+    "manus-cli-darwin-x64": "0.1.1",
+    "manus-cli-linux-x64": "0.1.1",
+    "manus-cli-linux-arm64": "0.1.1",
+    "manus-cli-windows-x64": "0.1.1"
   }
 }
