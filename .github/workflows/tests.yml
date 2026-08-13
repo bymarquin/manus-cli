@@ -29,11 +29,11 @@ jobs:
           python -m unittest discover -s tests -v 2>&1 | tee unittest.log
           status=${PIPESTATUS[0]}
           if [ "$status" -ne 0 ]; then
-            while IFS= read -r line; do
-              line=${line//'%'/'%25'}
-              line=${line//$'\r'/'%0D'}
-              echo "::error title=unittest failure::$line"
-            done < <(tail -n 80 unittest.log)
+            details=$(tail -n 100 unittest.log)
+            details=${details//'%'/'%25'}
+            details=${details//$'\r'/'%0D'}
+            details=${details//$'\n'/'%0A'}
+            echo "::error title=unittest failure::$details"
           fi
           exit "$status"
 

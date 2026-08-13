@@ -9,6 +9,7 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 from _helpers import IsolatedConfigTestCase
+from prompt_toolkit.document import Document
 
 from manus_cli import cli
 from manus_cli.api import ManusAPIError
@@ -46,6 +47,47 @@ class ExtractMentionsTests(IsolatedConfigTestCase):
             finally:
                 os.chdir(old_cwd)
 
+
+class ReplCompleterTests(unittest.TestCase):
+    def test_slash_completion_only_at_start_and_shows_arguments(self):
+        completer = cli._ReplCompleter(Path.cwd())
+        completions = list(completer.get_completions(Document("/co"), None))
+        self.assertEqual([item.text for item in completions], ["/confirm"])
+        self.assertIn("<event_id>", str(completions[0].display))
+        self.assertEqual(list(completer.get_completions(Document("texto /co"), None)), [])
+
+    def test_file_completion_respects_gitignore_and_secret_policy(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "src").mkdir()
+            (root / "src" / "app.py").write_text("print(1)")
+            (root / "ignored.log").write_text("x")
+            (root / ".env").write_text("SECRET=1")
+            (root / "run.sh").write_text("#!/bin/sh")
+            (root / ".gitignore").write_text("*.log\n")
+
+            completer = cli._ReplCompleter(root)
+            completions = list(completer.get_completions(Document("veja @"), None))
+            names = {item.text for item in completions}
+
+            self.assertIn("@src/app.py", names)
+            self.assertNotIn("@ignored.log", names)
+            self.assertNotIn("@.env", names)
+            self.assertNotIn("@run.sh", names)
+
+    def test_file_completion_filters_by_prefix_and_is_cached(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "alpha.txt").write_text("a")
+            (root / "beta.txt").write_text("b")
+            completer = cli._ReplCompleter(root)
+
+            first = list(completer.get_completions(Document("@al"), None))
+            (root / "also.txt").write_text("later")
+            second = list(completer.get_completions(Document("@al"), None))
+
+            self.assertEqual([item.text for item in first], ["@alpha.txt"])
+            self.assertEqual([item.text for item in second], ["@alpha.txt"])
 
 class DownloadAttachmentsPathTraversalTests(unittest.TestCase):
     def test_traversal_filename_is_confined_to_output_dir(self):

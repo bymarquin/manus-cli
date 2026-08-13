@@ -161,8 +161,8 @@ Quando `waiting`, a CLI mostra `waiting_for_event_type`/`waiting_for_event_id`/d
 
 ### Dentro do modo chat (`manus`)
 
-- `@arquivo.py` na mensagem — se o arquivo existir no diretório atual, é anexado automaticamente (ex: `revise @app.py`); passa pelo mesmo filtro de segredo/tamanho/tipo do `--project`
-- `/status`, `/use <id>`, `/history`, `/open [id]`, `/confirm <event_id> [json]`, `/help`, `/exit` — comandos rápidos sem sair da conversa
+- Ao digitar `@`, um dropdown sugere arquivos permitidos do projeto, respeitando `.gitignore` e sem expor segredos, scripts ou symlinks. `@arquivo.py` na mensagem anexa o arquivo automaticamente (ex: `revise @app.py`).
+- Ao começar a linha com `/`, um dropdown sugere `/status`, `/use <id>`, `/history`, `/open [id]`, `/confirm <event_id> [json]`, `/help` e `/exit`.
 
 ## Robustez (retry, rate limits, downloads)
 
@@ -246,7 +246,7 @@ docs/superpowers/specs/
 python -m unittest discover -s tests -v
 ```
 
-89 testes, todos com rede mockada via `httpx.MockTransport` ou client mockado (nada bate na API real) e config isolada em diretório temporário (nenhum teste toca `~/.config/manus`). Cobrem: retry idempotente vs. não-idempotente (o ponto mais importante — nunca duplicar `task.create`/`sendMessage`), `429`+`Retry-After`+jitter, corpo HTTP inválido/inesperado, ciclo de vida `stopped`/`waiting`/`error`, `.gitignore`, symlink escapando da raiz, filtro de segredo (inclusive em `@menção`), colisão de nome, limites de tamanho/quantidade, download seguro (sem sobrescrever, com limite de tamanho), config/`.manusrc` corrompidos, resolução de connector por nome, e que `--json` só imprime JSON no stdout.
+106 testes, todos com rede mockada via `httpx.MockTransport` ou client mockado (nada bate na API real) e config isolada em diretório temporário (nenhum teste toca `~/.config/manus`). Cobrem: retry idempotente vs. não-idempotente (o ponto mais importante — nunca duplicar `task.create`/`sendMessage`), `429`+`Retry-After`+jitter, corpo HTTP inválido/inesperado, ciclo de vida `stopped`/`waiting`/`error`, `.gitignore`, symlink escapando da raiz, filtro de segredo (inclusive no autocomplete e em `@menção`), dropdown de `/` e `@`, fallback ASCII em consoles Windows, colisão de nome, limites de tamanho/quantidade, download seguro, config/`.manusrc` corrompidos, resolução de connector por nome, e que `--json` só imprime JSON no stdout.
 
 Roda automaticamente no GitHub Actions a cada push/PR: testes (Linux/macOS/Windows, Python 3.9 e 3.12), lint (`ruff`), e build+smoke do wheel.
 

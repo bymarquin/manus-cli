@@ -7,6 +7,10 @@ import re
 import sys
 from pathlib import Path
 
+from prompt_toolkit import PromptSession
+from prompt_toolkit.completion import Completer, Completion
+from prompt_toolkit.styles import Style
+
 from . import config, files, task_runner
 from .api import ManusAPIError, ManusClient
 from .config import ConfigError
@@ -449,7 +453,87 @@ def _upload_paths(client: ManusClient, paths: list[Path]) -> list[dict]:
     return content
 
 
-_SLASH_HELP = "/status  /use <id>  /history  /open [id]  /confirm <event_id> [json]  /help  /exit"
+_SLASH_COMMANDS: list[tuple[str, str]] = [
+    ("status", ""),
+    ("use", "<id>"),
+    ("history", ""),
+    ("open", "[id]"),
+    ("confirm", "<event_id> [json]"),
+    ("help", ""),
+    ("exit", ""),
+]
+_SLASH_HELP = "  ".join(f"/{name} {args}".rstrip() for name, args in _SLASH_COMMANDS)
+
+_REPL_MAX_MENTION_FILES = 2000  # ponytail: teto simples pra árvore de arquivos gigante, sem cache incremental
+
+
+class _ReplCompleter(Completer):
+    """Dropdown de sugestões: /comandos ao digitar '/', arquivos do projeto ao digitar '@'."""
+
+    def __init__(self, root: Path):
+        self._root = root
+        self._gitignore: files.GitignoreMatcher | None = None
+        self._file_cache: list[str] | None = None
+
+    def _project_files(self) -> list[str]:
+        if self._file_cache is not None:
+            return self._file_cache
+        if self._gitignore is None:
+            self._gitignore = files.GitignoreMatcher.load(self._root)
+        found = []
+        for path in sorted(self._root.rglob("*"), key=lambda item: item.as_posix()):
+            # A completion is only a convenience, but it must not advertise
+            # paths the upload policy would reject (especially secrets/symlinks).
+            if path.is_symlink() or not path.is_file():
+                continue
+            rel = path.relative_to(self._root)
+            if any(part in files.IGNORED_DIR_NAMES for part in rel.parts):
+                continue
+            if self._gitignore.matches(rel):
+                continue
+            if files.looks_like_secret(rel) or files.is_rejected_type(path):
+                continue
+            found.append(rel.as_posix())
+            if len(found) >= _REPL_MAX_MENTION_FILES:
+                break
+        self._file_cache = found
+        return self._file_cache
+
+    def get_completions(self, document, complete_event):
+        before = document.text_before_cursor
+        word = document.get_word_before_cursor(WORD=True)
+
+        if word.startswith("/") and not before[: -len(word)].strip():
+            prefix = word[1:]
+            for name, args in _SLASH_COMMANDS:
+                if name.startswith(prefix):
+                    display = f"/{name}" + (f" {args}" if args else "")
+                    yield Completion(f"/{name}", start_position=-len(word), display=display)
+            return
+
+        if word.startswith("@"):
+            prefix = word[1:]
+            matches = [p for p in self._project_files() if p.startswith(prefix)]
+            for rel in sorted(matches)[:50]:
+                yield Completion(f"@{rel}", start_position=-len(word))
+
+
+def _build_repl_session(root: Path) -> PromptSession | None:
+    if not sys.stdin.isatty():
+        return None
+    style = Style.from_dict(
+        {
+            "prompt": "bold fg:cyan",
+            "completion-menu.completion": "bg:default fg:cyan",
+            "completion-menu.completion.current": "bg:cyan fg:black bold",
+        }
+    )
+    return PromptSession(
+        [("class:prompt", f"{PROMPT} ")],
+        completer=_ReplCompleter(root),
+        complete_while_typing=True,
+        style=style,
+    )
 
 
 def _run_slash_command(client: ManusClient, task_id: str | None, line: str) -> tuple[str | None, bool]:
@@ -659,9 +743,13 @@ def cmd_chat(argv: list[str]) -> int:
 
             # REPL
             print_header(os.getcwd())
+            repl_session = _build_repl_session(Path.cwd())
             while True:
                 try:
-                    line = console.input(f"[accent]{PROMPT}[/accent] ").strip()
+                    if repl_session is not None:
+                        line = repl_session.prompt().strip()
+                    else:
+                        line = console.input(f"[accent]{PROMPT}[/accent] ").strip()
                 except (EOFError, KeyboardInterrupt):
                     console.print()
                     return 0
