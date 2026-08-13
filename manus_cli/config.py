@@ -16,6 +16,9 @@ def save_api_key(api_key: str) -> None:
 
 
 def load_api_key() -> str | None:
+    env_key = os.environ.get("MANUS_API_KEY")
+    if env_key:
+        return env_key
     if not CREDENTIALS_FILE.exists():
         return None
     return json.loads(CREDENTIALS_FILE.read_text()).get("api_key")
