@@ -244,7 +244,6 @@ def _run_turn(
         task_id = resp["task_id"]
     else:
         client.send_message(task_id, content, connectors=connectors)
-    config.save_last_task(task_id)
 
     if not json_output:
         console.print("[bold cyan]Manus trabalhando...[/bold cyan]")
@@ -254,6 +253,11 @@ def _run_turn(
             status = msg["status_update"]["agent_status"]
         if not json_output and msg.get("type") not in ("user_message", "assistant_message"):
             print_progress_event(msg)
+    # Only persist task_id once we know it's real — task.create can return a
+    # task_id that 404s on every read (Manus backend bug), and saving it here
+    # unconditionally used to clobber a previously-working last_task_id with
+    # a dead one, breaking --continue on the *next* invocation too.
+    config.save_last_task(task_id)
     if not json_output:
         icon = "[green]✓[/green]" if status == "stopped" else "[yellow]![/yellow]"
         console.print(f"{icon} Tarefa {status}")
