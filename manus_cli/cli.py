@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 from pathlib import Path
 
 from . import config
 from .api import ManusAPIError, ManusClient, last_assistant_message
-from .render import console, err_console, print_assistant, print_error, print_status
+from .render import console, err_console, print_assistant, print_error, print_header, print_status
 
 IGNORED_DIRS = {".git", "node_modules", "__pycache__", ".venv", "venv", "dist", "build"}
 MAX_PROJECT_FILE_BYTES = 10 * 1024 * 1024
@@ -100,9 +101,12 @@ def _run_turn(client: ManusClient, task_id: str | None, content, timeout: float)
     else:
         client.send_message(task_id, content)
     config.save_last_task(task_id)
-    client.wait_for_completion(task_id, timeout=timeout)
+    with console.status("[bold cyan]Manus trabalhando...[/bold cyan]", spinner="dots"):
+        client.wait_for_completion(task_id, timeout=timeout)
+    console.print("[green]✓[/green] Tarefa concluída")
     data = client.list_messages(task_id, limit=5, order="desc")
     print_assistant(last_assistant_message(data["messages"]))
+    console.print()
     return task_id
 
 
@@ -153,7 +157,7 @@ def cmd_chat(argv: list[str]) -> int:
             return 0
 
         # REPL
-        console.print("[dim]Modo chat. Ctrl+C ou linha vazia para sair.[/dim]")
+        print_header(os.getcwd())
         while True:
             try:
                 line = console.input("[bold cyan]> [/bold cyan]").strip()
