@@ -1,6 +1,6 @@
 {
   "name": "manus-cli-linux-x64",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Bin\u00e1rio nativo do manus-cli para Linux (x64)",
   "os": [
     "linux"
