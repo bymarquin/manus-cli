@@ -16,8 +16,8 @@ from .render import (
     print_error,
     print_header,
     print_history,
-    print_progress_event,
     print_status,
+    progress_label,
 )
 
 IGNORED_DIRS = {".git", "node_modules", "__pycache__", ".venv", "venv", "dist", "build"}
@@ -245,14 +245,19 @@ def _run_turn(
     else:
         client.send_message(task_id, content, connectors=connectors)
 
-    if not json_output:
-        console.print("[bold cyan]Manus trabalhando...[/bold cyan]")
     status = None
-    for msg in client.poll_new_events(task_id, since_ms, timeout=timeout):
-        if msg.get("type") == "status_update":
-            status = msg["status_update"]["agent_status"]
-        if not json_output and msg.get("type") not in ("user_message", "assistant_message"):
-            print_progress_event(msg)
+    if json_output:
+        for msg in client.poll_new_events(task_id, since_ms, timeout=timeout):
+            if msg.get("type") == "status_update":
+                status = msg["status_update"]["agent_status"]
+    else:
+        with console.status("[bold cyan]Manus trabalhando...[/bold cyan]", spinner="dots") as live:
+            for msg in client.poll_new_events(task_id, since_ms, timeout=timeout):
+                if msg.get("type") == "status_update":
+                    status = msg["status_update"]["agent_status"]
+                label = progress_label(msg)
+                if label:
+                    live.update(f"[bold cyan]{label}[/bold cyan]")
     # Only persist task_id once we know it's real — task.create can return a
     # task_id that 404s on every read (Manus backend bug), and saving it here
     # unconditionally used to clobber a previously-working last_task_id with

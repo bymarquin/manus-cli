@@ -24,14 +24,14 @@ _PROGRESS_ICONS = {
 }
 
 
-def print_progress_event(msg: dict) -> None:
+def progress_label(msg: dict) -> str | None:
     event_type = msg.get("type")
     payload = msg.get(event_type, {}) if event_type else {}
     label = payload.get("brief") or payload.get("description")
     if not label:
-        return
+        return None
     icon = _PROGRESS_ICONS.get(event_type, "•")
-    console.print(f"[dim]{icon} {label}[/dim]")
+    return f"{icon} {label}"
 
 
 def print_error(prefix: str, message: str) -> None:
