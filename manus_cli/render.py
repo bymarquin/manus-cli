@@ -77,3 +77,46 @@ def print_status(task: dict) -> None:
     console.print(f"[muted]status[/muted]       {task['status']}")
     console.print(f"[muted]credit_usage[/muted] {task.get('credit_usage', '?')}")
     console.print(f"[muted]url[/muted]          {task.get('task_url', '?')}")
+
+
+def print_waiting(status_detail: dict | None) -> None:
+    detail = status_detail or {}
+    event_type = detail.get("waiting_for_event_type", "?")
+    event_id = detail.get("waiting_for_event_id", "?")
+    description = detail.get("waiting_description") or "(sem descrição)"
+    console.print(f"[warning]⚠[/warning] Tarefa esperando: {description}")
+    console.print(f"  [muted]event_type[/muted] {event_type}")
+    console.print(f"  [muted]event_id[/muted]   {event_id}")
+    if event_type == "messageAskUser":
+        console.print("  [muted]→ responda normalmente (mensagem de texto) para continuar[/muted]")
+    else:
+        console.print(f"  [muted]→ manus confirm {event_id} [--input '<json>'][/muted]")
+
+
+def print_task_error(error_detail: dict | None) -> None:
+    detail = error_detail or {}
+    error_type = detail.get("error_type", "?")
+    content = detail.get("content") or "(sem detalhes)"
+    console.print(f"[error]✗[/error] Tarefa falhou ({error_type}): {content}")
+
+
+def print_connectors(connectors: list[dict]) -> None:
+    if not connectors:
+        console.print("[muted]— nenhum connector configurado nesta conta —[/muted]")
+        return
+    table = Table(box=box.SIMPLE_HEAD, header_style="accent", border_style="muted")
+    table.add_column("id")
+    table.add_column("nome")
+    table.add_column("tipo")
+    table.add_column("categoria")
+    for c in connectors:
+        table.add_row(c.get("id", ""), c.get("name", ""), c.get("type", ""), c.get("category", ""))
+    console.print(table)
+
+
+def print_dry_run(selected: list, skipped: list, total_bytes: int) -> None:
+    console.print(f"[accent]— dry-run: {len(selected)} arquivo(s), {total_bytes} bytes, nada foi enviado —[/accent]")
+    for f in selected:
+        console.print(f"  [success]✓[/success] {f.relative_path.as_posix()} [muted]({f.size} bytes)[/muted]")
+    for s in skipped:
+        console.print(f"  [warning]—[/warning] {s.relative_path.as_posix()} [muted]{s.reason}[/muted]")

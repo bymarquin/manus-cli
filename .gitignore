@@ -3,3 +3,12 @@ __pycache__/
 *.egg-info/
 .DS_Store
 manus-output/
+build/
+dist/
+node_modules/
+# binários nativos são gerados pelo CI de release, nunca commitados
+npm/manus-cli-darwin-arm64/bin/
+npm/manus-cli-darwin-x64/bin/
+npm/manus-cli-linux-x64/bin/
+npm/manus-cli-linux-arm64/bin/
+npm/manus-cli-win32-x64/bin/

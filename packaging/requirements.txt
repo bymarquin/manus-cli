@@ -1,0 +1,5 @@
+# Ferramentas principais de build pinadas. Dependências transitivas e de runtime
+# continuam resolvidas pelo pip; isto estabiliza a toolchain, mas não é um lockfile.
+# Renovado via Dependabot (.github/dependabot.yml, ecosystem pip, directory /packaging).
+pyinstaller==6.22.0
+pip-licenses==5.5.5

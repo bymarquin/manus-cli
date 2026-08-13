@@ -1,0 +1,21 @@
+{
+  "name": "manus-cli-win32-x64",
+  "version": "0.1.0",
+  "description": "Binário nativo do manus-cli para Windows (x64)",
+  "os": ["win32"],
+  "cpu": ["x64"],
+  "files": [
+    "bin",
+    "LICENSE",
+    "THIRD_PARTY_NOTICES.txt"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/bymarquin/manus-cli.git"
+  },
+  "license": "MIT",
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  }
+}

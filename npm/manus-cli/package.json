@@ -1,0 +1,39 @@
+{
+  "name": "manus-cli",
+  "version": "0.1.0",
+  "description": "CLI não-oficial para a API do Manus (v2) — launcher npm para o binário Python empacotado",
+  "bin": {
+    "manus": "bin/manus.js"
+  },
+  "files": [
+    "bin",
+    "LICENSE"
+  ],
+  "scripts": {
+    "test": "node --test"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "os": [
+    "darwin",
+    "linux",
+    "win32"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/bymarquin/manus-cli.git"
+  },
+  "license": "MIT",
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
+  "optionalDependencies": {
+    "manus-cli-darwin-arm64": "0.1.0",
+    "manus-cli-darwin-x64": "0.1.0",
+    "manus-cli-linux-x64": "0.1.0",
+    "manus-cli-linux-arm64": "0.1.0",
+    "manus-cli-win32-x64": "0.1.0"
+  }
+}

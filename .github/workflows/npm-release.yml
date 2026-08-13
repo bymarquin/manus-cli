@@ -1,0 +1,265 @@
+name: npm-release
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+
+jobs:
+  version-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - run: node scripts/check-npm-version-drift.js
+      - name: Tag deve casar exatamente com VERSION
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          set -e
+          tag="${GITHUB_REF#refs/tags/}"
+          version="v$(cat VERSION | tr -d '[:space:]')"
+          if [ "$tag" != "$version" ]; then
+            echo "Tag '$tag' não bate com VERSION ('$version')." >&2
+            exit 1
+          fi
+          echo "✓ tag '$tag' == VERSION"
+
+  launcher-test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "20"
+      - run: node --test
+        working-directory: npm/manus-cli
+
+  # Gate de qualidade Python dentro deste próprio workflow — build/publish do npm
+  # dependem disto, não só do workflow `tests.yml` separado (que não bloqueia uma tag push).
+  python-quality-gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+      - run: python -m pip install -e ".[dev]"
+      - run: python -m unittest discover -s tests -v
+      - run: ruff check manus_cli/ tests/
+      - run: mypy manus_cli/
+      - run: python -m build --wheel
+      - name: Smoke test do wheel instalado
+        run: |
+          set -e
+          python -m venv /tmp/wheel-smoke
+          /tmp/wheel-smoke/bin/pip install dist/*.whl
+          /tmp/wheel-smoke/bin/manus --help
+
+  build-native:
+    needs: [version-check, launcher-test, python-quality-gate]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # macos-13 (x64) foi removido dos runners hospedados pelo GitHub em dez/2025.
+          # macos-15-intel é o label x64 atual; macos-14 segue válido pra arm64.
+          - pkg: manus-cli-darwin-arm64
+            os: macos-14
+            bin: manus
+          - pkg: manus-cli-darwin-x64
+            os: macos-15-intel
+            bin: manus
+          - pkg: manus-cli-linux-x64
+            os: ubuntu-latest
+            bin: manus
+          - pkg: manus-cli-linux-arm64
+            os: ubuntu-24.04-arm
+            bin: manus
+          - pkg: manus-cli-win32-x64
+            os: windows-latest
+            bin: manus.exe
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "20"
+
+      - name: Instalar dependências de build (pinadas em packaging/requirements.txt)
+        run: python -m pip install -e . -r packaging/requirements.txt
+
+      - name: Build standalone binary (PyInstaller, sem Python necessário para rodar)
+        run: >
+          pyinstaller --onefile --name manus --clean --noconfirm
+          --distpath dist-bin --paths .
+          packaging/pyinstaller/entry.py
+
+      - name: Smoke test — manus --help
+        shell: bash
+        run: ./dist-bin/${{ matrix.bin }} --help
+
+      - name: Smoke test — comando offline (--project --dry-run, sem API key)
+        shell: bash
+        run: ./dist-bin/${{ matrix.bin }} --project . --dry-run
+
+      - name: Registrar deployment target do binário macOS
+        if: startsWith(matrix.pkg, 'manus-cli-darwin-')
+        shell: bash
+        run: otool -l ./dist-bin/${{ matrix.bin }} | grep -A5 LC_BUILD_VERSION
+
+      - name: Empacotar binário no pacote nativo npm
+        shell: bash
+        run: |
+          mkdir -p npm/${{ matrix.pkg }}/bin
+          cp dist-bin/${{ matrix.bin }} npm/${{ matrix.pkg }}/bin/${{ matrix.bin }}
+          chmod +x npm/${{ matrix.pkg }}/bin/${{ matrix.bin }} || true
+
+      - name: Gerar THIRD_PARTY_NOTICES.txt (inventário de licenças das dependências embutidas)
+        shell: bash
+        run: |
+          set -e
+          {
+            echo "Third-party notices — manus-cli (${{ matrix.pkg }})"
+            echo "Este binário embute um interpretador Python e as dependências abaixo."
+            echo
+          } > npm/${{ matrix.pkg }}/THIRD_PARTY_NOTICES.txt
+          # --ignore-packages exclui ferramentas de build (pyinstaller, pip-licenses e
+          # suas próprias dependências) que NÃO são importadas por manus_cli e portanto
+          # o PyInstaller não embute no binário — só o que realmente vai dentro do onefile.
+          pip-licenses --format=plain --with-license-file --no-license-path \
+            --ignore-packages pyinstaller pyinstaller-hooks-contrib altgraph macholib \
+              pip-licenses prettytable tomli wcwidth packaging setuptools importlib-metadata \
+              importlib_metadata \
+            >> npm/${{ matrix.pkg }}/THIRD_PARTY_NOTICES.txt
+
+      - name: Verificar que nenhum arquivo indevido entraria no tarball (npm pack --dry-run)
+        working-directory: npm/${{ matrix.pkg }}
+        shell: bash
+        run: |
+          set -e
+          npm pack --dry-run 2>&1 | tee pack-dry-run.txt
+          if grep -Ei '\.env|credentials\.json|manus-output|state\.json' pack-dry-run.txt; then
+            echo "arquivo indevido encontrado no pacote nativo" >&2
+            exit 1
+          fi
+          for required in LICENSE THIRD_PARTY_NOTICES.txt "bin/${{ matrix.bin }}"; do
+            if ! grep -qF "$required" pack-dry-run.txt; then
+              echo "arquivo obrigatório ausente do tarball: $required" >&2
+              exit 1
+            fi
+          done
+
+      - name: Empacotar (npm pack real, pra artifact)
+        working-directory: npm/${{ matrix.pkg }}
+        run: npm pack
+
+      - name: Empacotar launcher para o smoke test desta plataforma
+        working-directory: npm/manus-cli
+        shell: bash
+        run: |
+          set -e
+          npm pack --dry-run 2>&1 | tee pack-dry-run.txt
+          if grep -Ei '\.env|credentials\.json|manus-output|state\.json' pack-dry-run.txt; then
+            echo "arquivo indevido encontrado no launcher" >&2
+            exit 1
+          fi
+          for required in LICENSE bin/manus.js; do
+            if ! grep -qF "$required" pack-dry-run.txt; then
+              echo "arquivo obrigatório ausente do launcher: $required" >&2
+              exit 1
+            fi
+          done
+          npm pack
+
+      - name: Instalar tarball em diretório temporário e testar via npx (prova real nesta plataforma)
+        shell: bash
+        run: |
+          set -e
+          TMPDIR_INSTALL=$(mktemp -d)
+          cd "$TMPDIR_INSTALL"
+          npm init -y >/dev/null
+          npm install "$GITHUB_WORKSPACE/npm/${{ matrix.pkg }}"/*.tgz
+          # O pacote nativo local já satisfaz a plataforma. --omit=optional evita
+          # consultar o registry pelos outros pacotes antes do primeiro release.
+          npm install "$GITHUB_WORKSPACE/npm/manus-cli"/*.tgz --omit=optional --no-save
+          npx manus --help
+          npx manus --project "$GITHUB_WORKSPACE" --dry-run
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: npm-tarball-native-${{ matrix.pkg }}
+          path: npm/${{ matrix.pkg }}/*.tgz
+          if-no-files-found: error
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: matrix.pkg == 'manus-cli-linux-x64'
+        with:
+          name: npm-tarball-launcher-manus-cli
+          path: npm/manus-cli/*.tgz
+          if-no-files-found: error
+
+  # Publicação real: só roda em push de tag `vX.Y.Z`. Usa OIDC (npm trusted publishing,
+  # sem NPM_TOKEN) — exige que o pacote já esteja configurado como Trusted Publisher em
+  # npmjs.com apontando pra este repo+workflow. Bootstrap inicial (primeiro publish de um
+  # pacote novo, quando ainda não há versão prévia pra virar trusted publisher) precisa
+  # ser feito manualmente uma vez por um mantenedor com `npm publish` local — depois disso
+  # este workflow assume via OIDC. Ver README (seção de release).
+  publish:
+    needs: build-native
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    environment: npm-publish
+    permissions:
+      contents: read
+      id-token: write # necessário para OIDC trusted publishing + provenance
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "22.14.0"
+          registry-url: "https://registry.npmjs.org"
+
+      # OIDC trusted publishing requer npm >= 11.5.0.
+      - run: npm install -g npm@11.5.2
+
+      # Sem merge-multiple: cada artifact vira uma subpasta tarballs/<nome-do-artifact>/,
+      # o que preserva a distinção nativo vs. launcher usada pra ordenar o publish abaixo.
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          path: tarballs
+          pattern: "npm-tarball-*"
+
+      - name: Publicar pacotes nativos primeiro, launcher por último
+        run: |
+          set -e
+          version="$(cat VERSION | tr -d '[:space:]')"
+
+          publish_one() {
+            local tgz="$1"
+            local name
+            name="$(tar -xzOf "$tgz" package/package.json | node -e '
+              let data = "";
+              process.stdin.on("data", (c) => (data += c));
+              process.stdin.on("end", () => console.log(JSON.parse(data).name));
+            ')"
+            if npm view "${name}@${version}" version >/dev/null 2>&1; then
+              echo "↷ ${name}@${version} já publicado — pulando (idempotente, seguro pra reexecução)."
+              return
+            fi
+            echo "Publicando ${name}@${version} ($tgz)"
+            npm publish "$tgz" --provenance --access public
+          }
+
+          for tgz in tarballs/npm-tarball-native-*/*.tgz; do
+            publish_one "$tgz"
+          done
+          for tgz in tarballs/npm-tarball-launcher-*/*.tgz; do
+            publish_one "$tgz"
+          done

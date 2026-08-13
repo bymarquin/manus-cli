@@ -1,129 +1,182 @@
 from __future__ import annotations
 
 import argparse
-import fnmatch
 import json
 import os
 import re
 import sys
-import time
 from pathlib import Path
 
-from . import config
-from .api import ManusAPIError, ManusClient, last_assistant_entry, last_assistant_message
+from . import config, files, task_runner
+from .api import ManusAPIError, ManusClient
+from .config import ConfigError
 from .render import (
     PROMPT,
     console,
     err_console,
     print_assistant,
+    print_connectors,
+    print_dry_run,
     print_error,
     print_fail,
     print_header,
     print_history,
     print_status,
     print_success,
+    print_task_error,
+    print_waiting,
     print_warning,
     progress_label,
 )
 
-IGNORED_DIRS = {".git", "node_modules", "__pycache__", ".venv", "venv", "dist", "build"}
-MAX_PROJECT_FILE_BYTES = 10 * 1024 * 1024
+OUTPUT_DIR = Path("manus-output")
 
-SECRET_DIR_NAMES = {".ssh", ".aws", ".gnupg"}
-SECRET_NAME_PATTERNS = [
-    ".env", ".env.*", "*.pem", "*.key", "*_rsa", "id_rsa*",
-    "credentials.json", "secrets*.json", "*.p12", "*.pfx", ".npmrc", ".netrc", "*.pgpass",
-]
-
-
-def _looks_like_secret(path: Path) -> bool:
-    if any(part in SECRET_DIR_NAMES for part in path.parts):
-        return True
-    return any(fnmatch.fnmatch(path.name, pattern) for pattern in SECRET_NAME_PATTERNS)
+_UUID_RE = re.compile(r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$")
 
 
 def _client(timeout: float = 30.0) -> ManusClient:
-    api_key = config.load_api_key()
+    try:
+        api_key = config.load_api_key()
+    except ConfigError as e:
+        print_fail(str(e))
+        sys.exit(1)
     if not api_key:
         print_fail("Nenhuma API key configurada. Rode: manus login")
         sys.exit(1)
     return ManusClient(api_key, timeout=timeout)
 
 
-def cmd_login() -> int:
+def _resolve_connectors(client: ManusClient, raw_values: list[str] | None) -> list[str] | None:
+    """UUIDs pass through; anything else is resolved by name via connector.list."""
+    if not raw_values:
+        return None
+    resolved = []
+    connector_cache: list[dict] | None = None
+    for value in raw_values:
+        if _UUID_RE.match(value):
+            resolved.append(value)
+            continue
+        if connector_cache is None:
+            connector_cache = client.list_connectors().get("data", [])
+        matches = [c for c in connector_cache if c.get("name", "").lower() == value.lower()]
+        if not matches:
+            matches = [c for c in connector_cache if value.lower() in c.get("name", "").lower()]
+        if not matches:
+            names = ", ".join(c.get("name", "?") for c in connector_cache) or "(nenhum configurado)"
+            raise ManusAPIError("connector_not_found", f"connector {value!r} não encontrado. Disponíveis: {names}")
+        if len(matches) > 1:
+            names = ", ".join(c.get("name", "?") for c in matches)
+            raise ManusAPIError(
+                "connector_ambiguous", f"{value!r} corresponde a vários connectors ({names}); use o UUID direto"
+            )
+        resolved.append(matches[0]["id"])
+    return resolved
+
+
+# ---------------------------------------------------------------------------
+# Simple subcommands
+# ---------------------------------------------------------------------------
+
+
+def cmd_login(argv: list[str]) -> int:
     import getpass
 
     api_key = getpass.getpass("Manus API key: ").strip()
     if not api_key:
         print_fail("API key vazia.")
         return 1
-    client = ManusClient(api_key)
-    try:
-        client.validate_key()
-    except ManusAPIError as e:
-        print_error("Falha ao validar a key", e.message)
-        return 1
-    except Exception as e:
-        print_error("Falha de rede ao validar a key", str(e))
-        return 1
+    with ManusClient(api_key) as client:
+        try:
+            client.validate_key()
+        except ManusAPIError as e:
+            print_error("Falha ao validar a key", e.message)
+            return 1
+        except Exception as e:  # noqa: BLE001 — top-level CLI boundary: any network failure here should
+            print_error("Falha de rede ao validar a key", str(e))  # become a friendly message, not a traceback.
+            return 1
     config.save_api_key(api_key)
     print_success(f"key salva ({config.mask(api_key)})")
     return 0
 
 
-def cmd_use(args: list[str]) -> int:
-    if not args:
-        print_fail("Uso: manus use <task_id> [--as <apelido>]")
-        return 1
-    task_id = args[0]
-    alias = None
-    if "--as" in args:
-        idx = args.index("--as")
-        if idx + 1 >= len(args):
-            print_fail("Uso: manus use <task_id> --as <apelido>")
+def cmd_use(argv: list[str]) -> int:
+    parser = argparse.ArgumentParser(prog="manus use", description="Fixa uma tarefa existente como a atual")
+    parser.add_argument("task_id")
+    parser.add_argument("--as", dest="alias", metavar="APELIDO", default=None)
+    args = parser.parse_args(argv)
+
+    with _client() as client:
+        try:
+            detail = client.task_detail(args.task_id)
+        except ManusAPIError as e:
+            print_error("Erro", e.message)
             return 1
-        alias = args[idx + 1]
-    client = _client()
-    try:
-        detail = client.task_detail(task_id)
-    except ManusAPIError as e:
-        print_error("Erro", e.message)
-        return 1
-    config.save_last_task(task_id)
-    if alias:
-        config.save_alias(alias, task_id)
-    suffix = f" (apelido: {alias})" if alias else ""
-    print_success(f"usando tarefa \"{detail['task']['title']}\" ({task_id}){suffix}")
+
+    config.save_last_task(args.task_id)
+    if args.alias:
+        config.save_alias(args.alias, args.task_id)
+    suffix = f" (apelido: {args.alias})" if args.alias else ""
+    print_success(f"usando tarefa \"{detail['task']['title']}\" ({args.task_id}){suffix}")
     return 0
 
 
-def cmd_alias(args: list[str]) -> int:
-    if not args or args[0] != "list":
-        print_fail("Uso: manus alias list")
-        return 1
-    aliases = config.load_aliases()
-    if not aliases:
-        console.print("[muted](nenhum apelido salvo — use: manus use <task_id> --as <apelido>)[/muted]")
-        return 0
-    for name, task_id in aliases.items():
-        console.print(f"[accent]{name}[/accent] [muted]→[/muted] {task_id}")
+def cmd_alias(argv: list[str]) -> int:
+    parser = argparse.ArgumentParser(prog="manus alias")
+    sub = parser.add_subparsers(dest="action", required=True)
+    sub.add_parser("list")
+    args = parser.parse_args(argv)
+
+    if args.action == "list":
+        aliases = config.load_aliases()
+        if not aliases:
+            console.print("[muted]— nenhum apelido salvo — use: manus use <task_id> --as <apelido> —[/muted]")
+            return 0
+        for name, task_id in aliases.items():
+            console.print(f"[accent]{name}[/accent] [muted]→[/muted] {task_id}")
     return 0
 
 
-def cmd_history(args: list[str]) -> int:
-    limit = int(args[0]) if args else 20
-    client = _client()
-    try:
-        data = client.list_tasks(limit=limit)
-    except ManusAPIError as e:
-        print_error("Erro", e.message)
+def cmd_history(argv: list[str]) -> int:
+    parser = argparse.ArgumentParser(prog="manus history", description="Lista tarefas recentes")
+    parser.add_argument("limit", nargs="?", type=int, default=20, help="quantidade a listar (padrão: 20)")
+    args = parser.parse_args(argv)
+    if args.limit <= 0:
+        print_fail("limite deve ser um número positivo")
         return 1
+
+    with _client() as client:
+        try:
+            data = client.list_tasks(limit=args.limit)
+        except ManusAPIError as e:
+            print_error("Erro", e.message)
+            return 1
     print_history(data.get("data", []))
     return 0
 
 
-def cmd_open(args: list[str]) -> int:
-    task_id = args[0] if args else config.load_last_task()
+def cmd_connector(argv: list[str]) -> int:
+    parser = argparse.ArgumentParser(prog="manus connector")
+    sub = parser.add_subparsers(dest="action", required=True)
+    sub.add_parser("list")
+    args = parser.parse_args(argv)
+
+    if args.action == "list":
+        with _client() as client:
+            try:
+                data = client.list_connectors()
+            except ManusAPIError as e:
+                print_error("Erro", e.message)
+                return 1
+        print_connectors(data.get("data", []))
+    return 0
+
+
+def cmd_open(argv: list[str]) -> int:
+    parser = argparse.ArgumentParser(prog="manus open")
+    parser.add_argument("task_id", nargs="?", default=None)
+    args = parser.parse_args(argv)
+
+    task_id = args.task_id or config.load_last_task()
     if not task_id:
         print_fail("Nenhum task_id informado e nenhuma tarefa recente salva.")
         return 1
@@ -135,7 +188,39 @@ def cmd_open(args: list[str]) -> int:
     return 0
 
 
-def cmd_doctor(args: list[str]) -> int:
+def cmd_confirm(argv: list[str]) -> int:
+    parser = argparse.ArgumentParser(
+        prog="manus confirm", description="Confirma uma ação pendente (task.confirmAction)"
+    )
+    parser.add_argument("event_id")
+    parser.add_argument("--input", dest="input_json", default=None, help="JSON com os dados do confirm_input_schema")
+    parser.add_argument("--task", dest="task_id", default=None)
+    args = parser.parse_args(argv)
+
+    task_id = args.task_id or config.load_last_task()
+    if not task_id:
+        print_fail("Nenhuma tarefa ativa. Use --task <id> ou 'manus use <id>' primeiro.")
+        return 1
+
+    input_data = None
+    if args.input_json:
+        try:
+            input_data = json.loads(args.input_json)
+        except json.JSONDecodeError as e:
+            print_fail(f"--input não é JSON válido: {e}")
+            return 1
+
+    with _client() as client:
+        try:
+            task_runner.confirm_action(client, task_id, args.event_id, input_data)
+        except ManusAPIError as e:
+            print_error("Erro", e.message)
+            return 1
+    print_success("Ação confirmada.")
+    return 0
+
+
+def cmd_doctor(argv: list[str]) -> int:
     import importlib.metadata
 
     ok = True
@@ -146,91 +231,90 @@ def cmd_doctor(args: list[str]) -> int:
         version = "dev (não instalado como pacote)"
     console.print(f"[muted]versão[/muted]  {version}")
 
-    api_key = config.load_api_key()
+    try:
+        api_key = config.load_api_key()
+    except ConfigError as e:
+        print_fail(str(e))
+        return 1
+
     key_source = "MANUS_API_KEY" if os.environ.get("MANUS_API_KEY") else "credentials.json"
     if not api_key:
         print_fail("API key: nenhuma configurada (rode: manus login)")
         ok = False
     else:
         print_success(f"API key: presente ({key_source}, {config.mask(api_key)})")
-        try:
-            ManusClient(api_key).validate_key()
-            print_success("Conectividade com api.manus.ai: ok")
-        except ManusAPIError as e:
-            print_fail(f"Conectividade: key rejeitada ({e.message})")
-            ok = False
-        except Exception as e:
-            print_fail(f"Conectividade: falha de rede ({e})")
-            ok = False
+        with ManusClient(api_key) as client:
+            try:
+                client.validate_key()
+                print_success("Conectividade com api.manus.ai: ok")
+            except ManusAPIError as e:
+                print_fail(f"Conectividade: key rejeitada ({e.message})")
+                ok = False
+            except Exception as e:  # noqa: BLE001 — diagnostic command: report any failure, don't crash.
+                print_fail(f"Conectividade: falha de rede ({e})")
+                ok = False
 
     console.print(f"[muted]config[/muted]   {config.CONFIG_DIR}")
-    last_task = config.load_last_task()
-    aliases = config.load_aliases()
-    console.print(f"[muted]última tarefa: {last_task or '(nenhuma)'}, apelidos: {len(aliases)}[/muted]")
+    try:
+        last_task = config.load_last_task()
+        aliases = config.load_aliases()
+        console.print(f"[muted]última tarefa: {last_task or '(nenhuma)'}, apelidos: {len(aliases)}[/muted]")
+    except ConfigError as e:
+        print_fail(str(e))
+        ok = False
 
-    project_rc = config.load_project_rc()
-    if project_rc:
-        console.print(f"[muted].manusrc neste diretório: {project_rc}[/muted]")
+    try:
+        project_rc = config.load_project_rc()
+        if project_rc:
+            console.print(f"[muted].manusrc neste diretório: {project_rc}[/muted]")
+    except ConfigError as e:
+        print_fail(str(e))
+        ok = False
 
     return 0 if ok else 1
 
 
-def cmd_status(args: list[str]) -> int:
-    task_id = args[0] if args else config.load_last_task()
+def cmd_status(argv: list[str]) -> int:
+    parser = argparse.ArgumentParser(prog="manus status")
+    parser.add_argument("task_id", nargs="?", default=None)
+    args = parser.parse_args(argv)
+
+    task_id = args.task_id or config.load_last_task()
     if not task_id:
         print_fail("Nenhum task_id informado e nenhuma tarefa recente salva.")
         return 1
-    client = _client()
-    try:
-        detail = client.task_detail(task_id)
-    except ManusAPIError as e:
-        print_error("Erro", e.message)
-        return 1
+    with _client() as client:
+        try:
+            detail = client.task_detail(task_id)
+        except ManusAPIError as e:
+            print_error("Erro", e.message)
+            return 1
     print_status(detail["task"])
     return 0
 
 
-def cmd_result(args: list[str]) -> int:
-    task_id = args[0] if args else config.load_last_task()
+def cmd_result(argv: list[str]) -> int:
+    parser = argparse.ArgumentParser(prog="manus result")
+    parser.add_argument("task_id", nargs="?", default=None)
+    args = parser.parse_args(argv)
+
+    task_id = args.task_id or config.load_last_task()
     if not task_id:
         print_fail("Nenhum task_id informado e nenhuma tarefa recente salva.")
         return 1
-    client = _client()
-    try:
-        data = client.list_messages(task_id, limit=5, order="desc")
-    except ManusAPIError as e:
-        print_error("Erro", e.message)
-        return 1
-    print_assistant(last_assistant_message(data["messages"]))
+    with _client() as client:
+        try:
+            data = client.list_messages(task_id, limit=5, order="desc")
+        except ManusAPIError as e:
+            print_error("Erro", e.message)
+            return 1
+    print_assistant(task_runner.last_assistant_message(data["messages"]))
     return 0
 
 
-def _collect_project_files(root: Path, allow_secret: bool = False) -> list[Path]:
-    files = []
-    for path in root.rglob("*"):
-        if not path.is_file():
-            continue
-        if any(part in IGNORED_DIRS for part in path.parts):
-            continue
-        if _looks_like_secret(path) and not allow_secret:
-            print_warning(f"pulando {path} (parece segredo — use --allow-secret se for engano)")
-            continue
-        if path.stat().st_size > MAX_PROJECT_FILE_BYTES:
-            err_console.print(f"[muted]pulando {path} (>10MB)[/muted]")
-            continue
-        files.append(path)
-    return files
-
-
-def _upload_files(client: ManusClient, paths: list[Path]) -> list[dict]:
-    content = []
-    for path in paths:
-        file_id = client.upload_file(path)
-        content.append({"type": "file", "file_id": file_id, "filename": path.name})
-    return content
-
-
-OUTPUT_DIR = Path("manus-output")
+# ---------------------------------------------------------------------------
+# Attachments
+# ---------------------------------------------------------------------------
 
 
 def _download_attachments(client: ManusClient, task_id: str, attachments: list[dict]) -> list[str]:
@@ -243,12 +327,21 @@ def _download_attachments(client: ManusClient, task_id: str, attachments: list[d
         safe_name = os.path.basename(att.get("filename") or "arquivo") or "arquivo"
         dest = (base / safe_name).resolve()
         if dest != base and base not in dest.parents:
-            err_console.print(f"[muted]anexo com nome suspeito ignorado: {att.get('filename')!r}[/muted]")
+            print_warning(f"anexo com nome suspeito ignorado: {att.get('filename')!r}")
             continue
-        client.download_file(url, dest)
-        err_console.print(f"[muted]↓ salvo em {dest}[/muted]")
-        saved.append(str(dest))
+        try:
+            actual_path = client.download_file(url, dest)
+        except ManusAPIError as e:
+            print_warning(f"falha ao baixar anexo {safe_name!r}: {e.message}")
+            continue
+        err_console.print(f"[muted]↓ salvo em {actual_path}[/muted]")
+        saved.append(str(actual_path))
     return saved
+
+
+# ---------------------------------------------------------------------------
+# Turn execution (shared by one-shot prompts, --file/--project, and the REPL)
+# ---------------------------------------------------------------------------
 
 
 def _run_turn(
@@ -258,69 +351,105 @@ def _run_turn(
     timeout: float,
     connectors: list[str] | None = None,
     json_output: bool = False,
-) -> str:
-    since_ms = int(time.time() * 1000)
-    if task_id is None:
-        resp = client.create_task(content, connectors=connectors)
-        task_id = resp["task_id"]
-    else:
-        client.send_message(task_id, content, connectors=connectors)
+) -> tuple[str | None, int]:
+    """Runs one create/send + poll cycle. Returns (task_id, exit_code).
 
-    status = None
-    if json_output:
-        for msg in client.poll_new_events(task_id, since_ms, timeout=timeout):
-            if msg.get("type") == "status_update":
-                status = msg["status_update"]["agent_status"]
-    else:
-        with console.status("[accent]Manus trabalhando...[/accent]", spinner="dots") as live:
-            for msg in client.poll_new_events(task_id, since_ms, timeout=timeout):
-                if msg.get("type") == "status_update":
-                    status = msg["status_update"]["agent_status"]
-                label = progress_label(msg)
-                if label:
-                    live.update(f"[accent]{label}[/accent]")
-    # Only persist task_id once we know it's real — task.create can return a
-    # task_id that 404s on every read (Manus backend bug), and saving it here
-    # unconditionally used to clobber a previously-working last_task_id with
-    # a dead one, breaking --continue on the *next* invocation too.
-    config.save_last_task(task_id)
-    if not json_output:
-        if status == "stopped":
-            print_success(f"Tarefa {status}")
+    Exit codes: 0 = stopped (success), 1 = error or network failure,
+    2 = waiting (needs a reply or manus confirm) — never silently 0.
+    """
+
+    def _make_on_event(live):
+        def _cb(msg):
+            label = progress_label(msg)
+            if label:
+                live.update(f"[accent]{label}[/accent]")
+
+        return _cb
+
+    try:
+        if json_output:
+            outcome = task_runner.run_turn(client, task_id, content, timeout, connectors=connectors)
         else:
-            print_warning(f"Tarefa {status}")
+            with console.status("[accent]Manus trabalhando...[/accent]", spinner="dots") as live:
+                outcome = task_runner.run_turn(
+                    client, task_id, content, timeout, connectors=connectors, on_event=_make_on_event(live)
+                )
+    except task_runner.TaskTimeoutError as e:
+        print_fail(str(e))
+        return task_id, 1
 
-    data = client.list_messages(task_id, limit=5, order="desc")
-    entry = last_assistant_entry(data["messages"])
-    content_text = entry.get("content") if entry else None
-    attachments = _download_attachments(client, task_id, entry["attachments"]) if entry and entry.get("attachments") else []
+    # The task genuinely exists once we have any outcome (stopped/waiting/error all
+    # imply the server responded with a real status_update) — safe to persist.
+    config.save_last_task(outcome.task_id)
+
+    attachments_saved = (
+        _download_attachments(client, outcome.task_id, outcome.attachments) if outcome.attachments else []
+    )
+
     if json_output:
-        print(json.dumps({
-            "task_id": task_id,
-            "status": status,
-            "content": content_text,
-            "attachments": attachments,
-        }, ensure_ascii=False))
-    else:
-        print_assistant(content_text)
-        console.print()
-    return task_id
+        print(
+            json.dumps(
+                {
+                    "task_id": outcome.task_id,
+                    "status": outcome.status,
+                    "content": outcome.content,
+                    "attachments": attachments_saved,
+                    "status_detail": outcome.status_detail if outcome.status == "waiting" else None,
+                    "error_detail": outcome.error_detail if outcome.status == "error" else None,
+                },
+                ensure_ascii=False,
+            )
+        )
+        exit_code = {"stopped": 0, "waiting": 2, "error": 1}[outcome.status]
+        return outcome.task_id, exit_code
 
+    if outcome.status == "stopped":
+        print_success("Tarefa stopped")
+        print_assistant(outcome.content)
+        console.print()
+        return outcome.task_id, 0
+    if outcome.status == "waiting":
+        print_waiting(outcome.status_detail)
+        if outcome.content:
+            print_assistant(outcome.content)
+        console.print()
+        return outcome.task_id, 2
+    print_task_error(outcome.error_detail)
+    console.print()
+    return outcome.task_id, 1
+
+
+# ---------------------------------------------------------------------------
+# @-mentions and /slash commands (REPL only)
+# ---------------------------------------------------------------------------
 
 _MENTION_RE = re.compile(r"@(\S+)")
 _MENTION_TRAILING_PUNCT = ".,;:!?)\"'"
 
 
-def _extract_mentions(text: str) -> list[Path]:
+def _extract_mentions(text: str, allow_secret: bool = False) -> list[Path]:
     paths = []
     for match in _MENTION_RE.finditer(text):
         candidate = Path(match.group(1).rstrip(_MENTION_TRAILING_PUNCT))
-        if candidate.is_file():
-            paths.append(candidate)
+        if not candidate.is_file():
+            continue
+        reason = files.check_single_file(candidate, allow_secret=allow_secret)
+        if reason:
+            print_warning(f"@{candidate} ignorado: {reason}")
+            continue
+        paths.append(candidate)
     return paths
 
 
-_SLASH_HELP = "/status  /use <id>  /history  /open [id]  /help  /exit"
+def _upload_paths(client: ManusClient, paths: list[Path]) -> list[dict]:
+    content = []
+    for path in paths:
+        file_id = client.upload_file(path)
+        content.append({"type": "file", "file_id": file_id, "filename": path.name})
+    return content
+
+
+_SLASH_HELP = "/status  /use <id>  /history  /open [id]  /confirm <event_id> [json]  /help  /exit"
 
 
 def _run_slash_command(client: ManusClient, task_id: str | None, line: str) -> tuple[str | None, bool]:
@@ -368,6 +497,30 @@ def _run_slash_command(client: ManusClient, task_id: str | None, line: str) -> t
         print_history(data.get("data", []))
         return task_id, False
 
+    if cmd == "confirm":
+        if not task_id:
+            print_fail("Nenhuma tarefa ativa ainda.")
+            return task_id, False
+        sub_parts = arg.split(maxsplit=1)
+        if not sub_parts:
+            print_fail("Uso: /confirm <event_id> [json]")
+            return task_id, False
+        event_id = sub_parts[0]
+        input_data = None
+        if len(sub_parts) > 1:
+            try:
+                input_data = json.loads(sub_parts[1])
+            except json.JSONDecodeError as e:
+                print_fail(f"JSON inválido: {e}")
+                return task_id, False
+        try:
+            task_runner.confirm_action(client, task_id, event_id, input_data)
+        except ManusAPIError as e:
+            print_error("Erro", e.message)
+            return task_id, False
+        print_success("Ação confirmada.")
+        return task_id, False
+
     if cmd == "open":
         target = arg or task_id
         if not target:
@@ -384,7 +537,12 @@ def _run_slash_command(client: ManusClient, task_id: str | None, line: str) -> t
     return task_id, False
 
 
-def cmd_chat(argv: list[str]) -> int:
+# ---------------------------------------------------------------------------
+# Default command: one-shot prompt / --file / --project / bare REPL
+# ---------------------------------------------------------------------------
+
+
+def _build_chat_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="manus")
     parser.add_argument("prompt", nargs="*")
     parser.add_argument("--continue", dest="continue_", action="store_true")
@@ -395,6 +553,13 @@ def cmd_chat(argv: list[str]) -> int:
     parser.add_argument("--json", dest="json_output", action="store_true")
     parser.add_argument("--task", dest="task_alias", default=None)
     parser.add_argument("--allow-secret", dest="allow_secret", action="store_true")
+    parser.add_argument("--dry-run", dest="dry_run", action="store_true", help="só mostra o que seria enviado")
+    parser.add_argument("--no-gitignore", dest="no_gitignore", action="store_true")
+    return parser
+
+
+def cmd_chat(argv: list[str]) -> int:
+    parser = _build_chat_parser()
     args = parser.parse_args(argv)
 
     prompt_text = " ".join(args.prompt) if args.prompt else None
@@ -405,101 +570,145 @@ def cmd_chat(argv: list[str]) -> int:
     if stdin_data:
         prompt_text = f"{stdin_data}\n\n{prompt_text}" if prompt_text else stdin_data
 
-    client = _client(timeout=args.timeout + 10)
-
-    project_rc = config.load_project_rc()
-    connectors = args.connectors or project_rc.get("connectors")
-
-    task_id = config.load_last_task() if args.continue_ else None
-    if args.continue_ and not task_id:
-        print_fail("Nenhuma tarefa anterior para continuar.")
-        return 1
-    if args.task_alias:
-        task_id = config.resolve_alias(args.task_alias)
-        if not task_id:
-            print_fail(f"Apelido desconhecido: {args.task_alias!r} (veja: manus alias list)")
+    # --project --dry-run needs no API key/client at all — it's a pure local preview.
+    if args.dry_run and args.project:
+        root = Path(args.project)
+        if not root.is_dir():
+            print_fail(f"Diretório não encontrado: {root}")
             return 1
-    if task_id is None and project_rc.get("task_id"):
-        task_id = project_rc["task_id"]
-        err_console.print(f"[muted]usando tarefa de .manusrc ({task_id})[/muted]")
+        result = files.select_project_files(root, allow_secret=args.allow_secret, respect_gitignore=not args.no_gitignore)
+        print_dry_run(result.files, result.skipped, result.total_bytes)
+        return 0
 
     try:
-        if args.file:
-            file_path = Path(args.file)
-            if not file_path.is_file():
-                print_fail(f"Arquivo não encontrado: {file_path}")
-                return 1
-            content = _upload_files(client, [file_path])
-            if prompt_text:
-                content.append({"type": "text", "text": prompt_text})
-            task_id = _run_turn(client, task_id, content, args.timeout, connectors, args.json_output)
-            return 0
-
-        if args.project:
-            root = Path(args.project)
-            if not root.is_dir():
-                print_fail(f"Diretório não encontrado: {root}")
-                return 1
-            files = _collect_project_files(root, args.allow_secret)
-            console.print(f"[muted]subindo {len(files)} arquivo(s) de {root}...[/muted]")
-            content = _upload_files(client, files)
-            if prompt_text:
-                content.append({"type": "text", "text": prompt_text})
-            task_id = _run_turn(client, task_id, content, args.timeout, connectors, args.json_output)
-            return 0
-
-        if prompt_text:
-            task_id = _run_turn(client, task_id, prompt_text, args.timeout, connectors, args.json_output)
-            return 0
-
-        # REPL
-        print_header(os.getcwd())
-        while True:
-            try:
-                line = console.input(f"[accent]{PROMPT}[/accent] ").strip()
-            except (EOFError, KeyboardInterrupt):
-                console.print()
-                return 0
-            if not line:
-                return 0
-            if line.startswith("/"):
-                task_id, should_exit = _run_slash_command(client, task_id, line)
-                if should_exit:
-                    return 0
-                continue
-            mentioned = _extract_mentions(line)
-            if mentioned:
-                turn_content = _upload_files(client, mentioned)
-                turn_content.append({"type": "text", "text": line})
-            else:
-                turn_content = line
-            task_id = _run_turn(client, task_id, turn_content, args.timeout, connectors, args.json_output)
-    except ManusAPIError as e:
-        print_error("Erro", e.message)
-        return 1
-    except TimeoutError as e:
+        project_rc = config.load_project_rc()
+    except ConfigError as e:
         print_fail(str(e))
         return 1
+
+    client = _client(timeout=args.timeout + 10)
+    try:
+        raw_connectors = args.connectors or project_rc.get("connector_names") or project_rc.get("connectors")
+        try:
+            connectors = _resolve_connectors(client, raw_connectors)
+        except ManusAPIError as e:
+            print_error("Erro", e.message)
+            return 1
+
+        task_id = config.load_last_task() if args.continue_ else None
+        if args.continue_ and not task_id:
+            print_fail("Nenhuma tarefa anterior para continuar.")
+            return 1
+        if args.task_alias:
+            task_id = config.resolve_alias(args.task_alias)
+            if not task_id:
+                print_fail(f"Apelido desconhecido: {args.task_alias!r} (veja: manus alias list)")
+                return 1
+        if task_id is None and project_rc.get("task_id"):
+            task_id = project_rc["task_id"]
+            err_console.print(f"[muted]usando tarefa de .manusrc ({task_id})[/muted]")
+
+        try:
+            if args.file:
+                file_path = Path(args.file)
+                if not file_path.is_file():
+                    print_fail(f"Arquivo não encontrado: {file_path}")
+                    return 1
+                reason = files.check_single_file(file_path, allow_secret=args.allow_secret)
+                if reason:
+                    print_fail(f"Recusado: {file_path} ({reason})")
+                    return 1
+                content = _upload_paths(client, [file_path])
+                if prompt_text:
+                    content.append({"type": "text", "text": prompt_text})
+                _, exit_code = _run_turn(client, task_id, content, args.timeout, connectors, args.json_output)
+                return exit_code
+
+            if args.project:
+                root = Path(args.project)
+                if not root.is_dir():
+                    print_fail(f"Diretório não encontrado: {root}")
+                    return 1
+                result = files.select_project_files(
+                    root, allow_secret=args.allow_secret, respect_gitignore=not args.no_gitignore
+                )
+                for s in result.skipped:
+                    print_warning(f"pulando {s.relative_path} ({s.reason})")
+                if not args.json_output:
+                    err_console.print(f"[muted]subindo {len(result.files)} arquivo(s) de {root}...[/muted]")
+                upload_result = files.upload_many(client, result.files)
+                content = upload_result.content
+                for f in upload_result.failed:
+                    print_warning(f"{f.relative_path}: {f.reason}")
+                if upload_result.uploaded:
+                    content.append({
+                        "type": "text",
+                        "text": files.build_manifest_text(upload_result.uploaded),
+                    })
+                if prompt_text:
+                    content.append({"type": "text", "text": prompt_text})
+                if not content:
+                    print_fail("Nada para enviar (nenhum arquivo passou nos filtros e nenhum prompt foi dado).")
+                    return 1
+                _, exit_code = _run_turn(client, task_id, content, args.timeout, connectors, args.json_output)
+                return exit_code
+
+            if prompt_text:
+                _, exit_code = _run_turn(client, task_id, prompt_text, args.timeout, connectors, args.json_output)
+                return exit_code
+
+            # REPL
+            print_header(os.getcwd())
+            while True:
+                try:
+                    line = console.input(f"[accent]{PROMPT}[/accent] ").strip()
+                except (EOFError, KeyboardInterrupt):
+                    console.print()
+                    return 0
+                if not line:
+                    return 0
+                if line.startswith("/"):
+                    task_id, should_exit = _run_slash_command(client, task_id, line)
+                    if should_exit:
+                        return 0
+                    continue
+                mentioned = _extract_mentions(line, allow_secret=args.allow_secret)
+                turn_content: str | list[dict]
+                if mentioned:
+                    turn_content = _upload_paths(client, mentioned)
+                    turn_content.append({"type": "text", "text": line})
+                else:
+                    turn_content = line
+                task_id, _ = _run_turn(client, task_id, turn_content, args.timeout, connectors, args.json_output)
+        except ManusAPIError as e:
+            print_error("Erro", e.message)
+            return 1
+    finally:
+        client.close()
+
+
+# ---------------------------------------------------------------------------
+# Entry point
+# ---------------------------------------------------------------------------
+
+_SUBCOMMANDS = {
+    "login": cmd_login,
+    "use": cmd_use,
+    "history": cmd_history,
+    "open": cmd_open,
+    "alias": cmd_alias,
+    "connector": cmd_connector,
+    "confirm": cmd_confirm,
+    "doctor": cmd_doctor,
+    "status": cmd_status,
+    "result": cmd_result,
+}
 
 
 def main() -> None:
     argv = sys.argv[1:]
-    if argv and argv[0] == "login":
-        sys.exit(cmd_login())
-    if argv and argv[0] == "use":
-        sys.exit(cmd_use(argv[1:]))
-    if argv and argv[0] == "history":
-        sys.exit(cmd_history(argv[1:]))
-    if argv and argv[0] == "open":
-        sys.exit(cmd_open(argv[1:]))
-    if argv and argv[0] == "alias":
-        sys.exit(cmd_alias(argv[1:]))
-    if argv and argv[0] == "doctor":
-        sys.exit(cmd_doctor(argv[1:]))
-    if argv and argv[0] == "status":
-        sys.exit(cmd_status(argv[1:]))
-    if argv and argv[0] == "result":
-        sys.exit(cmd_result(argv[1:]))
+    if argv and argv[0] in _SUBCOMMANDS:
+        sys.exit(_SUBCOMMANDS[argv[0]](argv[1:]))
     sys.exit(cmd_chat(argv))
 
 
