@@ -81,7 +81,7 @@ Cada tarball inclui `LICENSE`; os pacotes nativos também incluem `THIRD_PARTY_N
 
 **Bootstrap de um pacote novo:** um pacote que nunca foi publicado não pode virar trusted publisher antes de existir (é preciso já existir no registry pra configurar o vínculo). A primeira publicação de cada pacote precisa ser feita manualmente por um mantenedor autenticado (`npm publish`, com 2FA/token com bypass explícito), usando os tarballs já buildados pelo CI daquela tag — depois disso, toda publicação futura daquele pacote segue via OIDC neste workflow, sem intervenção manual.
 
-Se um pacote específico for rejeitado pelo registry (ex: detecção antispam num nome novo), os demais podem seguir publicados normalmente — o pendente é resolvido com o suporte do npm (https://npmjs.com/support) e publicado isoladamente depois, sem precisar de nova tag.
+Se um pacote específico for rejeitado pelo registry (`403 ... spam detection`) num primeiro publish, os demais podem seguir publicados normalmente. **Confirmado por teste real**: o registry do npm bloqueia especificamente a substring `win32` em nomes de pacote novos (o mesmo binário, mesmo conteúdo, publica sem problema sob `windows` — é o nome, não o `.exe`). É por isso que o pacote nativo do Windows aqui se chama `manus-cli-windows-x64`, não `manus-cli-win32-x64` (a chave interna `win32-x64` em `PLATFORM_MAP` no launcher é só a detecção de plataforma do Node, não precisa bater com o nome do pacote). Se outro nome novo for bloqueado por outro motivo, abra um chamado em https://npmjs.com/support.
 
 ### Escolha do empacotador: PyInstaller
 

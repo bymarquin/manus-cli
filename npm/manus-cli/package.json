@@ -34,6 +34,6 @@
     "manus-cli-darwin-x64": "0.1.0",
     "manus-cli-linux-x64": "0.1.0",
     "manus-cli-linux-arm64": "0.1.0",
-    "manus-cli-win32-x64": "0.1.0"
+    "manus-cli-windows-x64": "0.1.0"
   }
 }

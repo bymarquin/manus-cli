@@ -83,7 +83,7 @@ jobs:
           - pkg: manus-cli-linux-arm64
             os: ubuntu-24.04-arm
             bin: manus
-          - pkg: manus-cli-win32-x64
+          - pkg: manus-cli-windows-x64
             os: windows-latest
             bin: manus.exe
     runs-on: ${{ matrix.os }}

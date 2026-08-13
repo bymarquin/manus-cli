@@ -58,7 +58,7 @@ O pacote `manus-cli` do npm é um **launcher fino**: detecta seu sistema operaci
 |---|---|
 | macOS (Apple Silicon / Intel) | ✅ publicado |
 | Linux x64 / arm64 | ✅ publicado |
-| Windows x64 | ⏳ pendente — bloqueado por uma revisão antispam do registry do npm; use pipx no Windows até isso ser liberado |
+| Windows x64 | ✅ publicado |
 
 Fora dessa lista (Linux 32-bit, FreeBSD etc.), o launcher falha com um erro claro — use pipx.
 

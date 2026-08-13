@@ -1,5 +1,5 @@
 {
-  "name": "manus-cli-win32-x64",
+  "name": "manus-cli-windows-x64",
   "version": "0.1.0",
   "description": "Binário nativo do manus-cli para Windows (x64)",
   "os": ["win32"],

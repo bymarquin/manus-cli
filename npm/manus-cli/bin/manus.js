@@ -9,7 +9,11 @@ const PLATFORM_MAP = {
   'darwin-x64': 'manus-cli-darwin-x64',
   'linux-x64': 'manus-cli-linux-x64',
   'linux-arm64': 'manus-cli-linux-arm64',
-  'win32-x64': 'manus-cli-win32-x64',
+  // pacote npm chama-se "windows" (não "win32"): o registry do npm sinaliza
+  // "win32" como padrão de spam/malware em publicações novas (confirmado
+  // testando o mesmo binário sob os dois nomes) — "win32-x64" aqui continua
+  // sendo só a chave interna de detecção de plataforma do Node.
+  'win32-x64': 'manus-cli-windows-x64',
 };
 
 // No Windows, o Node só emula SIGINT/SIGBREAK/SIGHUP de forma limitada, e
