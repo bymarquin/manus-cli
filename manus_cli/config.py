@@ -30,15 +30,39 @@ def mask(api_key: str) -> str:
     return f"{api_key[:6]}...{api_key[-4:]}"
 
 
-def save_last_task(task_id: str) -> None:
+def _load_state() -> dict:
+    if not STATE_FILE.exists():
+        return {}
+    return json.loads(STATE_FILE.read_text())
+
+
+def _save_state(state: dict) -> None:
     CONFIG_DIR.mkdir(parents=True, exist_ok=True)
-    STATE_FILE.write_text(json.dumps({"last_task_id": task_id}))
+    STATE_FILE.write_text(json.dumps(state))
+
+
+def save_last_task(task_id: str) -> None:
+    state = _load_state()
+    state["last_task_id"] = task_id
+    _save_state(state)
 
 
 def load_last_task() -> str | None:
-    if not STATE_FILE.exists():
-        return None
-    return json.loads(STATE_FILE.read_text()).get("last_task_id")
+    return _load_state().get("last_task_id")
+
+
+def save_alias(name: str, task_id: str) -> None:
+    state = _load_state()
+    state.setdefault("aliases", {})[name] = task_id
+    _save_state(state)
+
+
+def load_aliases() -> dict:
+    return _load_state().get("aliases", {})
+
+
+def resolve_alias(name: str) -> str | None:
+    return load_aliases().get(name)
 
 
 def load_project_rc(cwd: Path | None = None) -> dict:

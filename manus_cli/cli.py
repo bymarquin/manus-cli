@@ -55,9 +55,16 @@ def cmd_login() -> int:
 
 def cmd_use(args: list[str]) -> int:
     if not args:
-        err_console.print("Uso: manus use <task_id>")
+        err_console.print("Uso: manus use <task_id> [--as <apelido>]")
         return 1
     task_id = args[0]
+    alias = None
+    if "--as" in args:
+        idx = args.index("--as")
+        if idx + 1 >= len(args):
+            err_console.print("Uso: manus use <task_id> --as <apelido>")
+            return 1
+        alias = args[idx + 1]
     client = _client()
     try:
         detail = client.task_detail(task_id)
@@ -65,7 +72,23 @@ def cmd_use(args: list[str]) -> int:
         print_error("Erro", e.message)
         return 1
     config.save_last_task(task_id)
-    console.print(f"[green]OK[/green] usando tarefa \"{detail['task']['title']}\" ({task_id})")
+    if alias:
+        config.save_alias(alias, task_id)
+    suffix = f" (apelido: {alias})" if alias else ""
+    console.print(f"[green]OK[/green] usando tarefa \"{detail['task']['title']}\" ({task_id}){suffix}")
+    return 0
+
+
+def cmd_alias(args: list[str]) -> int:
+    if not args or args[0] != "list":
+        err_console.print("Uso: manus alias list")
+        return 1
+    aliases = config.load_aliases()
+    if not aliases:
+        console.print("[dim](nenhum apelido salvo — use: manus use <task_id> --as <apelido>)[/dim]")
+        return 0
+    for name, task_id in aliases.items():
+        console.print(f"[bold]{name}[/bold] -> {task_id}")
     return 0
 
 
@@ -221,6 +244,7 @@ def cmd_chat(argv: list[str]) -> int:
     parser.add_argument("--timeout", type=float, default=300.0)
     parser.add_argument("--connector", dest="connectors", action="append", default=None)
     parser.add_argument("--json", dest="json_output", action="store_true")
+    parser.add_argument("--task", dest="task_alias", default=None)
     args = parser.parse_args(argv)
 
     prompt_text = " ".join(args.prompt) if args.prompt else None
@@ -240,6 +264,11 @@ def cmd_chat(argv: list[str]) -> int:
     if args.continue_ and not task_id:
         err_console.print("Nenhuma tarefa anterior para continuar.")
         return 1
+    if args.task_alias:
+        task_id = config.resolve_alias(args.task_alias)
+        if not task_id:
+            err_console.print(f"Apelido desconhecido: {args.task_alias!r} (veja: manus alias list)")
+            return 1
     if task_id is None and project_rc.get("task_id"):
         task_id = project_rc["task_id"]
         err_console.print(f"[dim]usando tarefa de .manusrc ({task_id})[/dim]")
@@ -302,6 +331,8 @@ def main() -> None:
         sys.exit(cmd_history(argv[1:]))
     if argv and argv[0] == "open":
         sys.exit(cmd_open(argv[1:]))
+    if argv and argv[0] == "alias":
+        sys.exit(cmd_alias(argv[1:]))
     if argv and argv[0] == "status":
         sys.exit(cmd_status(argv[1:]))
     if argv and argv[0] == "result":

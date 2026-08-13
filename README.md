@@ -70,13 +70,19 @@ manus --file relatorio.pdf "resuma"  # anexa um arquivo
 manus --project .                    # sobe os arquivos do diretório atual como contexto
 
 manus use <task_id>                  # fixa uma tarefa existente (ex: criada pela UI web) como a atual
+manus use <task_id> --as backend     # idem, e salva um apelido pra ela
+manus alias list                     # lista os apelidos salvos
+manus --task backend "prompt"        # usa a tarefa do apelido "backend" nessa chamada
 manus status [task_id]               # status da última tarefa (ou de um task_id específico)
 manus result [task_id]               # última resposta do agente
 manus history [limite]               # lista as tarefas recentes (padrão: 20)
+manus open [task_id]                 # abre a tarefa no navegador
 
 git diff | manus "revisa isso"       # lê stdin como parte do prompt
 manus --json "prompt"                # saída em JSON (task_id/status/content/attachments), pra scripts
 ```
+
+Variável de ambiente `MANUS_API_KEY` tem prioridade sobre a key salva em disco (útil em CI).
 
 Flags globais:
 - `--timeout <segundos>` (padrão 300) — tempo máximo esperando a tarefa terminar
