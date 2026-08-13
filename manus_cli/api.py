@@ -86,12 +86,25 @@ class ManusClient:
                 for chunk in resp.iter_bytes():
                     f.write(chunk)
 
-    def wait_for_completion(self, task_id: str, timeout: float, poll_interval: float = 2.0) -> dict:
+    def wait_for_reply(
+        self, task_id: str, since_ms: int, timeout: float, poll_interval: float = 2.0
+    ) -> tuple[dict, str]:
+        """Poll until a status_update *newer than since_ms* reaches a terminal state.
+
+        Using the task's current status alone races with sendMessage: right after
+        sending, the task can still report the *previous* turn's "stopped" status
+        for a moment, which made us read back a stale reply. Anchoring on message
+        timestamps avoids that.
+        """
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
-            detail = self.task_detail(task_id)
-            if detail["task"]["status"] in ("stopped", "waiting", "error"):
-                return detail
+            data = self.list_messages(task_id, limit=20, order="desc")
+            for msg in data["messages"]:
+                if msg.get("type") != "status_update" or int(msg["timestamp"]) <= since_ms:
+                    continue
+                status = msg["status_update"]["agent_status"]
+                if status in ("stopped", "waiting", "error"):
+                    return data, status
             time.sleep(poll_interval)
         raise TimeoutError(f"Tarefa {task_id} não concluiu em {timeout}s")
 

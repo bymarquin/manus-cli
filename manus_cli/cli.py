@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import sys
+import time
 from pathlib import Path
 
 from . import config
@@ -113,8 +115,9 @@ def _upload_files(client: ManusClient, paths: list[Path]) -> list[dict]:
 OUTPUT_DIR = Path("manus-output")
 
 
-def _download_attachments(client: ManusClient, task_id: str, attachments: list[dict]) -> None:
+def _download_attachments(client: ManusClient, task_id: str, attachments: list[dict]) -> list[str]:
     base = (OUTPUT_DIR / task_id).resolve()
+    saved = []
     for att in attachments:
         url = att.get("url")
         if not url:
@@ -125,27 +128,45 @@ def _download_attachments(client: ManusClient, task_id: str, attachments: list[d
             err_console.print(f"[dim]anexo com nome suspeito ignorado: {att.get('filename')!r}[/dim]")
             continue
         client.download_file(url, dest)
-        console.print(f"[dim]↓ salvo em {dest}[/dim]")
+        err_console.print(f"[dim]↓ salvo em {dest}[/dim]")
+        saved.append(str(dest))
+    return saved
 
 
 def _run_turn(
-    client: ManusClient, task_id: str | None, content, timeout: float, connectors: list[str] | None = None
+    client: ManusClient,
+    task_id: str | None,
+    content,
+    timeout: float,
+    connectors: list[str] | None = None,
+    json_output: bool = False,
 ) -> str:
+    since_ms = int(time.time() * 1000)
     if task_id is None:
         resp = client.create_task(content, connectors=connectors)
         task_id = resp["task_id"]
     else:
         client.send_message(task_id, content, connectors=connectors)
     config.save_last_task(task_id)
-    with console.status("[bold cyan]Manus trabalhando...[/bold cyan]", spinner="dots"):
-        client.wait_for_completion(task_id, timeout=timeout)
-    console.print("[green]✓[/green] Tarefa concluída")
-    data = client.list_messages(task_id, limit=5, order="desc")
+    if json_output:
+        data, status = client.wait_for_reply(task_id, since_ms, timeout=timeout)
+    else:
+        with console.status("[bold cyan]Manus trabalhando...[/bold cyan]", spinner="dots"):
+            data, status = client.wait_for_reply(task_id, since_ms, timeout=timeout)
+        console.print("[green]✓[/green] Tarefa concluída")
     entry = last_assistant_entry(data["messages"])
-    print_assistant(entry.get("content") if entry else None)
-    if entry and entry.get("attachments"):
-        _download_attachments(client, task_id, entry["attachments"])
-    console.print()
+    content_text = entry.get("content") if entry else None
+    attachments = _download_attachments(client, task_id, entry["attachments"]) if entry and entry.get("attachments") else []
+    if json_output:
+        print(json.dumps({
+            "task_id": task_id,
+            "status": status,
+            "content": content_text,
+            "attachments": attachments,
+        }, ensure_ascii=False))
+    else:
+        print_assistant(content_text)
+        console.print()
     return task_id
 
 
@@ -157,6 +178,7 @@ def cmd_chat(argv: list[str]) -> int:
     parser.add_argument("--project", dest="project", default=None)
     parser.add_argument("--timeout", type=float, default=300.0)
     parser.add_argument("--connector", dest="connectors", action="append", default=None)
+    parser.add_argument("--json", dest="json_output", action="store_true")
     args = parser.parse_args(argv)
 
     prompt_text = " ".join(args.prompt) if args.prompt else None
@@ -183,7 +205,7 @@ def cmd_chat(argv: list[str]) -> int:
             content = _upload_files(client, [file_path])
             if prompt_text:
                 content.append({"type": "text", "text": prompt_text})
-            task_id = _run_turn(client, task_id, content, args.timeout, args.connectors)
+            task_id = _run_turn(client, task_id, content, args.timeout, args.connectors, args.json_output)
             return 0
 
         if args.project:
@@ -196,11 +218,11 @@ def cmd_chat(argv: list[str]) -> int:
             content = _upload_files(client, files)
             if prompt_text:
                 content.append({"type": "text", "text": prompt_text})
-            task_id = _run_turn(client, task_id, content, args.timeout, args.connectors)
+            task_id = _run_turn(client, task_id, content, args.timeout, args.connectors, args.json_output)
             return 0
 
         if prompt_text:
-            task_id = _run_turn(client, task_id, prompt_text, args.timeout, args.connectors)
+            task_id = _run_turn(client, task_id, prompt_text, args.timeout, args.connectors, args.json_output)
             return 0
 
         # REPL
@@ -213,7 +235,7 @@ def cmd_chat(argv: list[str]) -> int:
                 return 0
             if not line:
                 return 0
-            task_id = _run_turn(client, task_id, line, args.timeout, args.connectors)
+            task_id = _run_turn(client, task_id, line, args.timeout, args.connectors, args.json_output)
     except ManusAPIError as e:
         print_error("Erro", e.message)
         return 1
