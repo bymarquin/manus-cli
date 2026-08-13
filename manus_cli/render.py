@@ -1,57 +1,70 @@
 from __future__ import annotations
 
+from rich import box
 from rich.console import Console
 from rich.markdown import Markdown
 from rich.table import Table
+from rich.theme import Theme
 
-console = Console()
-err_console = Console(stderr=True, style="bold red")
+_THEME = Theme(
+    {
+        "accent": "bold cyan",
+        "muted": "dim",
+        "success": "bold green",
+        "error": "bold red",
+        "warning": "bold yellow",
+    }
+)
+
+console = Console(theme=_THEME)
+err_console = Console(stderr=True, theme=_THEME)
+
+PROMPT = "❯"
 
 
 def print_assistant(content: str | None) -> None:
     if content is None:
-        console.print("[dim](sem resposta do assistente ainda)[/dim]")
+        console.print("[muted]— sem resposta do assistente ainda —[/muted]")
         return
     console.print(Markdown(content))
-
-
-_PROGRESS_ICONS = {
-    "tool_used": "🔧",
-    "status_update": "•",
-    "plan_update": "📋",
-    "new_plan_step": "▸",
-    "explanation": "💭",
-}
 
 
 def progress_label(msg: dict) -> str | None:
     event_type = msg.get("type")
     payload = msg.get(event_type, {}) if event_type else {}
-    label = payload.get("brief") or payload.get("description")
-    if not label:
-        return None
-    icon = _PROGRESS_ICONS.get(event_type, "•")
-    return f"{icon} {label}"
+    return payload.get("brief") or payload.get("description")
+
+
+def print_success(message: str) -> None:
+    console.print(f"[success]✓[/success] {message}")
 
 
 def print_error(prefix: str, message: str) -> None:
-    err_console.print(f"{prefix}: {message}")
+    err_console.print(f"[error]✗[/error] {prefix}: {message}")
+
+
+def print_fail(message: str) -> None:
+    err_console.print(f"[error]✗[/error] {message}")
+
+
+def print_warning(message: str) -> None:
+    err_console.print(f"[warning]⚠[/warning] {message}")
 
 
 def print_header(cwd: str) -> None:
     console.print()
-    console.print("  [bold]Manus CLI[/bold]")
-    console.print(f"  [dim]Projeto:[/dim] {cwd}")
+    console.print(f"  [accent]{PROMPT}[/accent] [bold]Manus CLI[/bold]")
+    console.print(f"    [muted]{cwd}[/muted]")
     console.print()
-    console.print("[dim]Ctrl+C ou linha vazia para sair.[/dim]")
+    console.print("  [muted]/help para comandos · Ctrl+C ou linha vazia para sair[/muted]")
     console.print()
 
 
 def print_history(tasks: list[dict]) -> None:
     if not tasks:
-        console.print("[dim](nenhuma tarefa encontrada)[/dim]")
+        console.print("[muted]— nenhuma tarefa encontrada —[/muted]")
         return
-    table = Table()
+    table = Table(box=box.SIMPLE_HEAD, header_style="accent", border_style="muted")
     table.add_column("id")
     table.add_column("título")
     table.add_column("status")
@@ -61,6 +74,6 @@ def print_history(tasks: list[dict]) -> None:
 
 
 def print_status(task: dict) -> None:
-    console.print(f"[bold]status[/bold]: {task['status']}")
-    console.print(f"[bold]credit_usage[/bold]: {task.get('credit_usage', '?')}")
-    console.print(f"[bold]url[/bold]: {task.get('task_url', '?')}")
+    console.print(f"[muted]status[/muted]       {task['status']}")
+    console.print(f"[muted]credit_usage[/muted] {task.get('credit_usage', '?')}")
+    console.print(f"[muted]url[/muted]          {task.get('task_url', '?')}")

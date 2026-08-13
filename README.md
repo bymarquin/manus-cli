@@ -5,15 +5,15 @@ CLI não-oficial para a [API do Manus](https://open.manus.ai/docs/v2/introductio
 ```
 $ manus
 
-  Manus CLI
-  Projeto: ~/projetos/sistema-escola
+  ❯ Manus CLI
+    ~/projetos/sistema-escola
 
-Ctrl+C ou linha vazia para sair.
+  /help para comandos · Ctrl+C ou linha vazia para sair
 
-> pesquise como integrar X
+❯ pesquise como integrar X
 
-⠋ Manus trabalhando...
-✓ Tarefa concluída
+⠋ verificando fontes...
+✓ Tarefa stopped
 
 resposta do agente aqui...
 ```
