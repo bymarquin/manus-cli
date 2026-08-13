@@ -74,7 +74,11 @@ manus status [task_id]               # status da última tarefa (ou de um task_i
 manus result [task_id]               # última resposta do agente
 ```
 
-Flag global: `--timeout <segundos>` (padrão 300) — tempo máximo esperando a tarefa terminar.
+Flags globais:
+- `--timeout <segundos>` (padrão 300) — tempo máximo esperando a tarefa terminar
+- `--connector <nome>` (repetível) — habilita um connector já configurado na sua conta Manus (ex: `--connector github`) pra essa mensagem
+
+Qualquer arquivo que o Manus anexar na resposta (código, planilha, imagem etc.) é baixado automaticamente pra `./manus-output/<task_id>/`.
 
 ## Onde fica salvo
 
