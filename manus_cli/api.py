@@ -64,12 +64,11 @@ class ManusClient:
     def task_detail(self, task_id: str) -> dict:
         return self._call("GET", "/task.detail", params={"task_id": task_id})
 
-    def list_messages(self, task_id: str, limit: int = 5, order: str = "desc") -> dict:
-        return self._call(
-            "GET",
-            "/task.listMessages",
-            params={"task_id": task_id, "limit": limit, "order": order},
-        )
+    def list_messages(self, task_id: str, limit: int = 5, order: str = "desc", verbose: bool = False) -> dict:
+        params = {"task_id": task_id, "limit": limit, "order": order}
+        if verbose:
+            params["verbose"] = "true"
+        return self._call("GET", "/task.listMessages", params=params)
 
     def upload_file(self, path: Path) -> str:
         record = self._call("POST", "/file.upload", json={"filename": path.name})
@@ -89,25 +88,31 @@ class ManusClient:
                 for chunk in resp.iter_bytes():
                     f.write(chunk)
 
-    def wait_for_reply(
-        self, task_id: str, since_ms: int, timeout: float, poll_interval: float = 2.0
-    ) -> tuple[dict, str]:
-        """Poll until a status_update *newer than since_ms* reaches a terminal state.
+    def poll_new_events(self, task_id: str, since_ms: int, timeout: float, poll_interval: float = 2.0):
+        """Yield each event newer than since_ms, in chronological order, as soon as it appears.
 
-        Using the task's current status alone races with sendMessage: right after
-        sending, the task can still report the *previous* turn's "stopped" status
-        for a moment, which made us read back a stale reply. Anchoring on message
-        timestamps avoids that.
+        Stops (returns) right after yielding a status_update that reaches a terminal
+        state. Anchoring on message timestamps rather than the task's current status
+        avoids a race with sendMessage: right after sending, the task can still report
+        the *previous* turn's "stopped" status for a moment, which previously made
+        callers read back a stale reply.
         """
+        seen: set[str] = set()
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
-            data = self.list_messages(task_id, limit=20, order="desc")
-            for msg in data["messages"]:
-                if msg.get("type") != "status_update" or int(msg["timestamp"]) <= since_ms:
-                    continue
-                status = msg["status_update"]["agent_status"]
-                if status in ("stopped", "waiting", "error"):
-                    return data, status
+            data = self.list_messages(task_id, limit=20, order="desc", verbose=True)
+            new_events = [
+                m for m in reversed(data["messages"]) if int(m["timestamp"]) > since_ms and m["id"] not in seen
+            ]
+            for msg in new_events:
+                seen.add(msg["id"])
+                yield msg
+                if msg.get("type") == "status_update" and msg["status_update"]["agent_status"] in (
+                    "stopped",
+                    "waiting",
+                    "error",
+                ):
+                    return
             time.sleep(poll_interval)
         raise TimeoutError(f"Tarefa {task_id} não concluiu em {timeout}s")
 

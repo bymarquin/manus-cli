@@ -9,7 +9,16 @@ from pathlib import Path
 
 from . import config
 from .api import ManusAPIError, ManusClient, last_assistant_entry, last_assistant_message
-from .render import console, err_console, print_assistant, print_error, print_header, print_history, print_status
+from .render import (
+    console,
+    err_console,
+    print_assistant,
+    print_error,
+    print_header,
+    print_history,
+    print_progress_event,
+    print_status,
+)
 
 IGNORED_DIRS = {".git", "node_modules", "__pycache__", ".venv", "venv", "dist", "build"}
 MAX_PROJECT_FILE_BYTES = 10 * 1024 * 1024
@@ -160,12 +169,20 @@ def _run_turn(
     else:
         client.send_message(task_id, content, connectors=connectors)
     config.save_last_task(task_id)
-    if json_output:
-        data, status = client.wait_for_reply(task_id, since_ms, timeout=timeout)
-    else:
-        with console.status("[bold cyan]Manus trabalhando...[/bold cyan]", spinner="dots"):
-            data, status = client.wait_for_reply(task_id, since_ms, timeout=timeout)
-        console.print("[green]✓[/green] Tarefa concluída")
+
+    if not json_output:
+        console.print("[bold cyan]Manus trabalhando...[/bold cyan]")
+    status = None
+    for msg in client.poll_new_events(task_id, since_ms, timeout=timeout):
+        if msg.get("type") == "status_update":
+            status = msg["status_update"]["agent_status"]
+        if not json_output and msg.get("type") not in ("user_message", "assistant_message"):
+            print_progress_event(msg)
+    if not json_output:
+        icon = "[green]✓[/green]" if status == "stopped" else "[yellow]![/yellow]"
+        console.print(f"{icon} Tarefa {status}")
+
+    data = client.list_messages(task_id, limit=5, order="desc")
     entry = last_assistant_entry(data["messages"])
     content_text = entry.get("content") if entry else None
     attachments = _download_attachments(client, task_id, entry["attachments"]) if entry and entry.get("attachments") else []

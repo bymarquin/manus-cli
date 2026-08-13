@@ -15,6 +15,25 @@ def print_assistant(content: str | None) -> None:
     console.print(Markdown(content))
 
 
+_PROGRESS_ICONS = {
+    "tool_used": "🔧",
+    "status_update": "•",
+    "plan_update": "📋",
+    "new_plan_step": "▸",
+    "explanation": "💭",
+}
+
+
+def print_progress_event(msg: dict) -> None:
+    event_type = msg.get("type")
+    payload = msg.get(event_type, {}) if event_type else {}
+    label = payload.get("brief") or payload.get("description")
+    if not label:
+        return
+    icon = _PROGRESS_ICONS.get(event_type, "•")
+    console.print(f"[dim]{icon} {label}[/dim]")
+
+
 def print_error(prefix: str, message: str) -> None:
     err_console.print(f"{prefix}: {message}")
 
