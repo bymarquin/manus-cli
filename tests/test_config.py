@@ -16,7 +16,10 @@ class ApiKeyTests(IsolatedConfigTestCase):
         self.assertEqual(config.load_api_key(), "sk-abc123")
         path = Path(os.environ["MANUS_CONFIG_DIR"]) / "credentials.json"
         mode = os.stat(path).st_mode & 0o777
-        self.assertEqual(oct(mode), "0o600")
+        if os.name != "nt":
+            # POSIX exposes permission bits. Windows uses ACLs and does not
+            # provide an equivalent 0600 contract through chmod/stat.
+            self.assertEqual(oct(mode), "0o600")
 
     def test_env_var_takes_priority_over_file(self):
         config.save_api_key("from-file")

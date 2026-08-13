@@ -107,12 +107,16 @@ jobs:
 
       - name: Smoke test — comando offline (--project --dry-run, sem API key)
         shell: bash
-        run: ./dist-bin/${{ matrix.bin }} --project . --dry-run
+        run: |
+          smoke_dir="${RUNNER_TEMP}/manus-smoke-project"
+          mkdir -p "$smoke_dir"
+          echo "offline smoke" > "$smoke_dir/README.txt"
+          ./dist-bin/${{ matrix.bin }} --project "$smoke_dir" --dry-run
 
       - name: Registrar deployment target do binário macOS
         if: startsWith(matrix.pkg, 'manus-cli-darwin-')
         shell: bash
-        run: otool -l ./dist-bin/${{ matrix.bin }} | grep -A5 LC_BUILD_VERSION
+        run: otool -l ./dist-bin/${{ matrix.bin }} | grep -E -A5 'LC_BUILD_VERSION|LC_VERSION_MIN_MACOSX'
 
       - name: Empacotar binário no pacote nativo npm
         shell: bash
