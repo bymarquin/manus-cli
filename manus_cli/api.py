@@ -20,6 +20,28 @@ def _require_https(url: str) -> None:
         raise ManusAPIError("unsafe_url", f"URL recusada (precisa ser https): {url}")
 
 
+_RETRYABLE_STATUS = {500, 502, 503, 504}
+
+
+def _with_retries(request_fn, attempts: int = 4, base_delay: float = 1.0):
+    """Retry transient network failures and 5xx responses with exponential backoff.
+
+    Doesn't retry 4xx/application errors (ok:false) — those aren't transient.
+    """
+    for attempt in range(attempts):
+        try:
+            resp = request_fn()
+        except httpx.TransportError as e:
+            if attempt == attempts - 1:
+                raise ManusAPIError("network_error", f"falha de rede após {attempts} tentativas: {e}") from e
+            time.sleep(base_delay * (2**attempt))
+            continue
+        if resp.status_code in _RETRYABLE_STATUS and attempt < attempts - 1:
+            time.sleep(base_delay * (2**attempt))
+            continue
+        return resp
+
+
 class ManusClient:
     def __init__(self, api_key: str, timeout: float = 30.0):
         self._http = httpx.Client(
@@ -32,7 +54,7 @@ class ManusClient:
         self._external_http = httpx.Client(timeout=timeout)
 
     def _call(self, method: str, path: str, **kwargs) -> dict:
-        resp = self._http.request(method, path, **kwargs)
+        resp = _with_retries(lambda: self._http.request(method, path, **kwargs))
         data = resp.json()
         if not data.get("ok", False):
             err = data.get("error", {})
@@ -75,7 +97,8 @@ class ManusClient:
         upload_url = record["upload_url"]
         _require_https(upload_url)
         with open(path, "rb") as f:
-            put_resp = self._external_http.put(upload_url, content=f.read())
+            file_bytes = f.read()
+        put_resp = _with_retries(lambda: self._external_http.put(upload_url, content=file_bytes))
         put_resp.raise_for_status()
         return record["file"]["id"]
 
