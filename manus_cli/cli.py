@@ -160,6 +160,13 @@ def cmd_chat(argv: list[str]) -> int:
     args = parser.parse_args(argv)
 
     prompt_text = " ".join(args.prompt) if args.prompt else None
+
+    stdin_data = None
+    if not sys.stdin.isatty():
+        stdin_data = sys.stdin.read().strip() or None
+    if stdin_data:
+        prompt_text = f"{stdin_data}\n\n{prompt_text}" if prompt_text else stdin_data
+
     client = _client(timeout=args.timeout + 10)
 
     task_id = config.load_last_task() if args.continue_ else None
