@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -100,6 +101,7 @@ class SelectProjectFilesTests(unittest.TestCase):
             names = {f.relative_path.name for f in result.files}
             self.assertIn("debug.log", names)
 
+    @unittest.skipIf(os.name == "nt", "criação de symlink exige privilégio especial no Windows")
     def test_symlink_escaping_root_is_skipped_symlink_inside_is_followed(self):
         with tempfile.TemporaryDirectory() as tmp, tempfile.TemporaryDirectory() as outside:
             root = Path(tmp)

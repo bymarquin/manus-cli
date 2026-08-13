@@ -52,8 +52,16 @@ function makeFakeNativePackage(tmpDir, pkgName, scriptBody) {
   fs.writeFileSync(path.join(pkgDir, 'package.json'), JSON.stringify({ name: pkgName, version: '0.0.0' }));
   const binName = process.platform === 'win32' ? 'manus.exe' : 'manus';
   const binPath = path.join(pkgDir, 'bin', binName);
+  if (process.platform === 'win32') {
+    // Windows não executa um arquivo-texto com extensão .exe. Copiamos o próprio
+    // node.exe e devolvemos o script como primeiro argumento do fixture.
+    fs.copyFileSync(process.execPath, binPath);
+    const scriptPath = path.join(pkgDir, 'fixture.js');
+    fs.writeFileSync(scriptPath, scriptBody);
+    return scriptPath;
+  }
   fs.writeFileSync(binPath, scriptBody, { mode: 0o755 });
-  return binPath;
+  return null;
 }
 
 test('repassa argv e o exit code do binário nativo', () => {
@@ -62,14 +70,15 @@ test('repassa argv e o exit code do binário nativo', () => {
     const key = platformKey();
     const pkgName = PLATFORM_MAP[key];
     assert.ok(pkgName, `plataforma de teste não suportada pelo launcher: ${key}`);
-    makeFakeNativePackage(
+    const fixtureScript = makeFakeNativePackage(
       tmp,
       pkgName,
       '#!/usr/bin/env node\nconsole.log(JSON.stringify(process.argv.slice(2)));\nprocess.exit(7);\n'
     );
 
     const launcherPath = path.join(__dirname, '..', 'bin', 'manus.js');
-    const result = spawnSync(process.execPath, [launcherPath, '--foo', 'bar', 'baz'], {
+    const nativeArgs = fixtureScript ? [fixtureScript, '--foo', 'bar', 'baz'] : ['--foo', 'bar', 'baz'];
+    const result = spawnSync(process.execPath, [launcherPath, ...nativeArgs], {
       env: { ...process.env, NODE_PATH: tmp },
       encoding: 'utf8',
     });
