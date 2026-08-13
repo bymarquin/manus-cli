@@ -256,9 +256,13 @@ jobs:
 
       - name: Publicar pacotes nativos primeiro, launcher por último
         run: |
-          set -e
           version="$(cat VERSION | tr -d '[:space:]')"
+          failed=()
 
+          # Sem set -e: cada pacote é independente — um Trusted Publisher mal
+          # configurado numa plataforma (ex: linux-arm64) não deve travar o
+          # publish dos outros 5 que já estão certos. Falhas viram um relatório
+          # no final, e o job ainda termina com exit != 0 se algo faltou.
           publish_one() {
             local tgz="$1"
             local name
@@ -269,10 +273,13 @@ jobs:
             ')"
             if npm view "${name}@${version}" version >/dev/null 2>&1; then
               echo "↷ ${name}@${version} já publicado — pulando (idempotente, seguro pra reexecução)."
-              return
+              return 0
             fi
             echo "Publicando ${name}@${version} ($tgz)"
-            npm publish "$tgz" --provenance --access public
+            if ! npm publish "$tgz" --provenance --access public; then
+              echo "✗ falhou: ${name}@${version}" >&2
+              failed+=("${name}")
+            fi
           }
 
           for tgz in tarballs/npm-tarball-native-*/*.tgz; do
@@ -281,3 +288,8 @@ jobs:
           for tgz in tarballs/npm-tarball-launcher-*/*.tgz; do
             publish_one "$tgz"
           done
+
+          if [ "${#failed[@]}" -gt 0 ]; then
+            echo "::error::Pacotes que falharam ao publicar: ${failed[*]} — confira o Trusted Publisher deles em npmjs.com e reexecute o workflow (o que já publicou não será republicado)." >&2
+            exit 1
+          fi
