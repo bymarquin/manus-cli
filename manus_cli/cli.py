@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import fnmatch
 import json
 import os
 import sys
@@ -22,6 +23,18 @@ from .render import (
 
 IGNORED_DIRS = {".git", "node_modules", "__pycache__", ".venv", "venv", "dist", "build"}
 MAX_PROJECT_FILE_BYTES = 10 * 1024 * 1024
+
+SECRET_DIR_NAMES = {".ssh", ".aws", ".gnupg"}
+SECRET_NAME_PATTERNS = [
+    ".env", ".env.*", "*.pem", "*.key", "*_rsa", "id_rsa*",
+    "credentials.json", "secrets*.json", "*.p12", "*.pfx", ".npmrc", ".netrc", "*.pgpass",
+]
+
+
+def _looks_like_secret(path: Path) -> bool:
+    if any(part in SECRET_DIR_NAMES for part in path.parts):
+        return True
+    return any(fnmatch.fnmatch(path.name, pattern) for pattern in SECRET_NAME_PATTERNS)
 
 
 def _client(timeout: float = 30.0) -> ManusClient:
@@ -187,12 +200,15 @@ def cmd_result(args: list[str]) -> int:
     return 0
 
 
-def _collect_project_files(root: Path) -> list[Path]:
+def _collect_project_files(root: Path, allow_secret: bool = False) -> list[Path]:
     files = []
     for path in root.rglob("*"):
         if not path.is_file():
             continue
         if any(part in IGNORED_DIRS for part in path.parts):
+            continue
+        if _looks_like_secret(path) and not allow_secret:
+            err_console.print(f"[yellow]pulando {path} (parece segredo — use --allow-secret se for engano)[/yellow]")
             continue
         if path.stat().st_size > MAX_PROJECT_FILE_BYTES:
             err_console.print(f"[dim]pulando {path} (>10MB)[/dim]")
@@ -294,6 +310,7 @@ def cmd_chat(argv: list[str]) -> int:
     parser.add_argument("--connector", dest="connectors", action="append", default=None)
     parser.add_argument("--json", dest="json_output", action="store_true")
     parser.add_argument("--task", dest="task_alias", default=None)
+    parser.add_argument("--allow-secret", dest="allow_secret", action="store_true")
     args = parser.parse_args(argv)
 
     prompt_text = " ".join(args.prompt) if args.prompt else None
@@ -339,7 +356,7 @@ def cmd_chat(argv: list[str]) -> int:
             if not root.is_dir():
                 err_console.print(f"Diretório não encontrado: {root}")
                 return 1
-            files = _collect_project_files(root)
+            files = _collect_project_files(root, args.allow_secret)
             console.print(f"[dim]subindo {len(files)} arquivo(s) de {root}...[/dim]")
             content = _upload_files(client, files)
             if prompt_text:
