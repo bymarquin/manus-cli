@@ -4,6 +4,7 @@ import argparse
 import fnmatch
 import json
 import os
+import re
 import sys
 import time
 from pathlib import Path
@@ -300,6 +301,83 @@ def _run_turn(
     return task_id
 
 
+_MENTION_RE = re.compile(r"@(\S+)")
+_MENTION_TRAILING_PUNCT = ".,;:!?)\"'"
+
+
+def _extract_mentions(text: str) -> list[Path]:
+    paths = []
+    for match in _MENTION_RE.finditer(text):
+        candidate = Path(match.group(1).rstrip(_MENTION_TRAILING_PUNCT))
+        if candidate.is_file():
+            paths.append(candidate)
+    return paths
+
+
+_SLASH_HELP = "/status  /use <id>  /history  /open [id]  /help  /exit"
+
+
+def _run_slash_command(client: ManusClient, task_id: str | None, line: str) -> tuple[str | None, bool]:
+    """Handle a '/comando' typed in the REPL. Returns (task_id, should_exit)."""
+    parts = line[1:].strip().split(maxsplit=1)
+    cmd = parts[0].lower() if parts else ""
+    arg = parts[1].strip() if len(parts) > 1 else ""
+
+    if cmd in ("exit", "quit"):
+        return task_id, True
+
+    if cmd == "help":
+        console.print(f"[dim]{_SLASH_HELP}[/dim]")
+        return task_id, False
+
+    if cmd == "status":
+        if not task_id:
+            err_console.print("Nenhuma tarefa ativa ainda.")
+        else:
+            try:
+                print_status(client.task_detail(task_id)["task"])
+            except ManusAPIError as e:
+                print_error("Erro", e.message)
+        return task_id, False
+
+    if cmd == "use":
+        if not arg:
+            err_console.print("Uso: /use <task_id>")
+            return task_id, False
+        try:
+            detail = client.task_detail(arg)
+        except ManusAPIError as e:
+            print_error("Erro", e.message)
+            return task_id, False
+        config.save_last_task(arg)
+        console.print(f"[green]OK[/green] usando tarefa \"{detail['task']['title']}\" ({arg})")
+        return arg, False
+
+    if cmd == "history":
+        try:
+            data = client.list_tasks(limit=10)
+        except ManusAPIError as e:
+            print_error("Erro", e.message)
+            return task_id, False
+        print_history(data.get("data", []))
+        return task_id, False
+
+    if cmd == "open":
+        target = arg or task_id
+        if not target:
+            err_console.print("Nenhuma tarefa pra abrir.")
+        else:
+            import webbrowser
+
+            url = f"https://manus.im/app/{target}"
+            webbrowser.open(url)
+            console.print(f"[dim]abrindo {url}[/dim]")
+        return task_id, False
+
+    err_console.print(f"Comando desconhecido: /{cmd} (tente /help)")
+    return task_id, False
+
+
 def cmd_chat(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(prog="manus")
     parser.add_argument("prompt", nargs="*")
@@ -378,7 +456,18 @@ def cmd_chat(argv: list[str]) -> int:
                 return 0
             if not line:
                 return 0
-            task_id = _run_turn(client, task_id, line, args.timeout, connectors, args.json_output)
+            if line.startswith("/"):
+                task_id, should_exit = _run_slash_command(client, task_id, line)
+                if should_exit:
+                    return 0
+                continue
+            mentioned = _extract_mentions(line)
+            if mentioned:
+                turn_content = _upload_files(client, mentioned)
+                turn_content.append({"type": "text", "text": line})
+            else:
+                turn_content = line
+            task_id = _run_turn(client, task_id, turn_content, args.timeout, connectors, args.json_output)
     except ManusAPIError as e:
         print_error("Erro", e.message)
         return 1

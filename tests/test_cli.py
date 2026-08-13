@@ -3,7 +3,14 @@ import unittest
 from pathlib import Path
 from unittest.mock import MagicMock
 
-from manus_cli.cli import OUTPUT_DIR, _collect_project_files, _download_attachments, _looks_like_secret
+from manus_cli.cli import (
+    OUTPUT_DIR,
+    _collect_project_files,
+    _download_attachments,
+    _extract_mentions,
+    _looks_like_secret,
+    _run_slash_command,
+)
 
 
 class LooksLikeSecretTests(unittest.TestCase):
@@ -68,6 +75,60 @@ class DownloadAttachmentsPathTraversalTests(unittest.TestCase):
                 self.assertEqual(dest.name, "passwd")
             finally:
                 cli_module.OUTPUT_DIR = original_output_dir
+
+
+class ExtractMentionsTests(unittest.TestCase):
+    def test_strips_trailing_punctuation_from_mentioned_paths(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            import os
+
+            old_cwd = os.getcwd()
+            os.chdir(tmp)
+            try:
+                Path("bug.py").write_text("x")
+                for line in (
+                    "tem erro em @bug.py? confirma.",
+                    "olha @bug.py, por favor",
+                    "(@bug.py)",
+                    "@bug.py",
+                ):
+                    with self.subTest(line=line):
+                        mentions = _extract_mentions(line)
+                        self.assertEqual([m.name for m in mentions], ["bug.py"])
+            finally:
+                os.chdir(old_cwd)
+
+    def test_ignores_mentions_of_nonexistent_files(self):
+        self.assertEqual(_extract_mentions("olha @nao_existe.py"), [])
+
+
+class SlashCommandTests(unittest.TestCase):
+    def _client(self):
+        client = MagicMock()
+        client.task_detail.return_value = {
+            "task": {"id": "abc", "title": "Minha Tarefa", "status": "stopped", "task_url": "https://manus.im/app/abc"}
+        }
+        return client
+
+    def test_help_does_not_change_task_or_exit(self):
+        task_id, should_exit = _run_slash_command(self._client(), "abc", "/help")
+        self.assertEqual(task_id, "abc")
+        self.assertFalse(should_exit)
+
+    def test_use_switches_task(self):
+        task_id, should_exit = _run_slash_command(self._client(), None, "/use abc")
+        self.assertEqual(task_id, "abc")
+        self.assertFalse(should_exit)
+
+    def test_exit_signals_should_exit(self):
+        task_id, should_exit = _run_slash_command(self._client(), "abc", "/exit")
+        self.assertEqual(task_id, "abc")
+        self.assertTrue(should_exit)
+
+    def test_unknown_command_does_not_crash_or_change_task(self):
+        task_id, should_exit = _run_slash_command(self._client(), "abc", "/blablabla")
+        self.assertEqual(task_id, "abc")
+        self.assertFalse(should_exit)
 
 
 if __name__ == "__main__":

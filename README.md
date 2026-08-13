@@ -69,6 +69,8 @@ manus --continue "e sobre Y?"        # continua a última tarefa
 manus --file relatorio.pdf "resuma"  # anexa um arquivo
 manus --project .                    # sobe os arquivos do diretório atual como contexto
 
+manus --project . --allow-secret     # como acima, mas sem pular arquivos que parecem segredo (.env etc.)
+
 manus use <task_id>                  # fixa uma tarefa existente (ex: criada pela UI web) como a atual
 manus use <task_id> --as backend     # idem, e salva um apelido pra ela
 manus alias list                     # lista os apelidos salvos
@@ -90,6 +92,11 @@ Flags globais:
 - `--connector <nome>` (repetível) — habilita um connector já configurado na sua conta Manus (ex: `--connector github`) pra essa mensagem
 
 Qualquer arquivo que o Manus anexar na resposta (código, planilha, imagem etc.) é baixado automaticamente pra `./manus-output/<task_id>/`.
+
+### Dentro do modo chat (`manus`)
+
+- `@arquivo.py` na mensagem — se o arquivo existir no diretório atual, é anexado automaticamente (ex: `revise @app.py`)
+- `/status`, `/use <id>`, `/history`, `/open [id]`, `/help`, `/exit` — comandos rápidos sem sair da conversa
 
 ## Autocomplete de shell
 
