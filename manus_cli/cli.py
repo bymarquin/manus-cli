@@ -42,6 +42,22 @@ def cmd_login() -> int:
     return 0
 
 
+def cmd_use(args: list[str]) -> int:
+    if not args:
+        err_console.print("Uso: manus use <task_id>")
+        return 1
+    task_id = args[0]
+    client = _client()
+    try:
+        detail = client.task_detail(task_id)
+    except ManusAPIError as e:
+        print_error("Erro", e.message)
+        return 1
+    config.save_last_task(task_id)
+    console.print(f"[green]OK[/green] usando tarefa \"{detail['task']['title']}\" ({task_id})")
+    return 0
+
+
 def cmd_status(args: list[str]) -> int:
     task_id = args[0] if args else config.load_last_task()
     if not task_id:
@@ -179,6 +195,8 @@ def main() -> None:
     argv = sys.argv[1:]
     if argv and argv[0] == "login":
         sys.exit(cmd_login())
+    if argv and argv[0] == "use":
+        sys.exit(cmd_use(argv[1:]))
     if argv and argv[0] == "status":
         sys.exit(cmd_status(argv[1:]))
     if argv and argv[0] == "result":

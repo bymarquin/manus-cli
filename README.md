@@ -69,6 +69,7 @@ manus --continue "e sobre Y?"        # continua a última tarefa
 manus --file relatorio.pdf "resuma"  # anexa um arquivo
 manus --project .                    # sobe os arquivos do diretório atual como contexto
 
+manus use <task_id>                  # fixa uma tarefa existente (ex: criada pela UI web) como a atual
 manus status [task_id]               # status da última tarefa (ou de um task_id específico)
 manus result [task_id]               # última resposta do agente
 ```
@@ -102,9 +103,18 @@ docs/superpowers/specs/
 .venv/bin/python tests/test_api.py    # ou: pytest tests/
 ```
 
-## Problema conhecido (aberto com o suporte do Manus)
+## Problema conhecido (aberto com o suporte do Manus) — e o workaround
 
-No momento, `task.create` responde com sucesso (`task_id`/`task_url` válidos) mas a tarefa não é persistida do lado do Manus — `task.detail`/`task.listMessages`/`task.list` retornam `not_found` logo em seguida, e a tarefa não aparece no app web. Reproduzido de forma consistente via `curl` puro (não é bug da CLI). Reportado para `api-support@manus.ai`. Até isso ser resolvido, comandos que criam tarefa vão parecer travados até o `--timeout`.
+No momento, `task.create` responde com sucesso (`task_id`/`task_url` válidos) mas a tarefa não é persistida do lado do Manus — `task.detail`/`task.listMessages`/`task.list` retornam `not_found` logo em seguida. Reportado para `api-support@manus.ai`. **Isolado**: o bug é só na criação via API. Tarefas criadas pela interface web do Manus funcionam perfeitamente via API (`task.detail`, `task.sendMessage`, `task.listMessages` — testado e confirmado).
+
+**Workaround**: crie uma tarefa qualquer pela interface web (manus.im), pegue o `task_id` da URL (`https://manus.im/app/<task_id>`), e:
+
+```bash
+manus use <task_id>          # fixa essa tarefa como a atual
+manus --continue "prompt"    # conversa nela via API normalmente
+```
+
+Repita `manus use <task_id>` sempre que quiser trocar de tarefa/contexto.
 
 ## Fora de escopo (v0.1)
 
