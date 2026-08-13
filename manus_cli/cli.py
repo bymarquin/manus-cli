@@ -114,12 +114,16 @@ OUTPUT_DIR = Path("manus-output")
 
 
 def _download_attachments(client: ManusClient, task_id: str, attachments: list[dict]) -> None:
+    base = (OUTPUT_DIR / task_id).resolve()
     for att in attachments:
         url = att.get("url")
-        filename = att.get("filename") or "arquivo"
         if not url:
             continue
-        dest = OUTPUT_DIR / task_id / filename
+        safe_name = os.path.basename(att.get("filename") or "arquivo") or "arquivo"
+        dest = (base / safe_name).resolve()
+        if dest != base and base not in dest.parents:
+            err_console.print(f"[dim]anexo com nome suspeito ignorado: {att.get('filename')!r}[/dim]")
+            continue
         client.download_file(url, dest)
         console.print(f"[dim]↓ salvo em {dest}[/dim]")
 
