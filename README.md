@@ -84,6 +84,19 @@ Flags globais:
 
 Qualquer arquivo que o Manus anexar na resposta (código, planilha, imagem etc.) é baixado automaticamente pra `./manus-output/<task_id>/`.
 
+## Autocomplete de shell
+
+**Bash** (adicione ao `~/.bashrc`):
+```bash
+source /caminho/pra/manus-cli/completions/manus.bash
+```
+
+**Zsh** (adicione ao `~/.zshrc`, antes do `compinit` se possível):
+```zsh
+fpath+=(/caminho/pra/manus-cli/completions)
+autoload -U compinit && compinit
+```
+
 ## `.manusrc` por projeto
 
 Crie um `.manusrc` (JSON) na raiz do repo pra fixar a tarefa/connectors padrão desse projeto — sem precisar rodar `manus use` toda vez que entrar na pasta:
