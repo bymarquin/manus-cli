@@ -34,14 +34,20 @@ class ManusClient:
     def validate_key(self) -> None:
         self._call("GET", "/task.list", params={"limit": 1})
 
-    def create_task(self, content, project_id: str | None = None) -> dict:
-        body = {"message": {"content": content}}
+    def create_task(self, content, project_id: str | None = None, connectors: list[str] | None = None) -> dict:
+        message = {"content": content}
+        if connectors:
+            message["connectors"] = connectors
+        body = {"message": message}
         if project_id:
             body["project_id"] = project_id
         return self._call("POST", "/task.create", json=body)
 
-    def send_message(self, task_id: str, content) -> dict:
-        body = {"task_id": task_id, "message": {"content": content}}
+    def send_message(self, task_id: str, content, connectors: list[str] | None = None) -> dict:
+        message = {"content": content}
+        if connectors:
+            message["connectors"] = connectors
+        body = {"task_id": task_id, "message": message}
         return self._call("POST", "/task.sendMessage", json=body)
 
     def task_detail(self, task_id: str) -> dict:
@@ -62,6 +68,14 @@ class ManusClient:
         put_resp.raise_for_status()
         return record["file"]["id"]
 
+    def download_file(self, url: str, dest: Path) -> None:
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        with self._http.stream("GET", url) as resp:
+            resp.raise_for_status()
+            with open(dest, "wb") as f:
+                for chunk in resp.iter_bytes():
+                    f.write(chunk)
+
     def wait_for_completion(self, task_id: str, timeout: float, poll_interval: float = 2.0) -> dict:
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
@@ -72,8 +86,13 @@ class ManusClient:
         raise TimeoutError(f"Tarefa {task_id} não concluiu em {timeout}s")
 
 
-def last_assistant_message(messages: list[dict]) -> str | None:
+def last_assistant_entry(messages: list[dict]) -> dict | None:
     for msg in messages:
         if msg.get("type") == "assistant_message":
-            return msg.get("assistant_message", {}).get("content")
+            return msg.get("assistant_message", {})
     return None
+
+
+def last_assistant_message(messages: list[dict]) -> str | None:
+    entry = last_assistant_entry(messages)
+    return entry.get("content") if entry else None

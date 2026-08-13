@@ -6,7 +6,7 @@ import sys
 from pathlib import Path
 
 from . import config
-from .api import ManusAPIError, ManusClient, last_assistant_message
+from .api import ManusAPIError, ManusClient, last_assistant_entry, last_assistant_message
 from .render import console, err_console, print_assistant, print_error, print_header, print_status
 
 IGNORED_DIRS = {".git", "node_modules", "__pycache__", ".venv", "venv", "dist", "build"}
@@ -110,18 +110,37 @@ def _upload_files(client: ManusClient, paths: list[Path]) -> list[dict]:
     return content
 
 
-def _run_turn(client: ManusClient, task_id: str | None, content, timeout: float) -> str:
+OUTPUT_DIR = Path("manus-output")
+
+
+def _download_attachments(client: ManusClient, task_id: str, attachments: list[dict]) -> None:
+    for att in attachments:
+        url = att.get("url")
+        filename = att.get("filename") or "arquivo"
+        if not url:
+            continue
+        dest = OUTPUT_DIR / task_id / filename
+        client.download_file(url, dest)
+        console.print(f"[dim]↓ salvo em {dest}[/dim]")
+
+
+def _run_turn(
+    client: ManusClient, task_id: str | None, content, timeout: float, connectors: list[str] | None = None
+) -> str:
     if task_id is None:
-        resp = client.create_task(content)
+        resp = client.create_task(content, connectors=connectors)
         task_id = resp["task_id"]
     else:
-        client.send_message(task_id, content)
+        client.send_message(task_id, content, connectors=connectors)
     config.save_last_task(task_id)
     with console.status("[bold cyan]Manus trabalhando...[/bold cyan]", spinner="dots"):
         client.wait_for_completion(task_id, timeout=timeout)
     console.print("[green]✓[/green] Tarefa concluída")
     data = client.list_messages(task_id, limit=5, order="desc")
-    print_assistant(last_assistant_message(data["messages"]))
+    entry = last_assistant_entry(data["messages"])
+    print_assistant(entry.get("content") if entry else None)
+    if entry and entry.get("attachments"):
+        _download_attachments(client, task_id, entry["attachments"])
     console.print()
     return task_id
 
@@ -133,6 +152,7 @@ def cmd_chat(argv: list[str]) -> int:
     parser.add_argument("--file", dest="file", default=None)
     parser.add_argument("--project", dest="project", default=None)
     parser.add_argument("--timeout", type=float, default=300.0)
+    parser.add_argument("--connector", dest="connectors", action="append", default=None)
     args = parser.parse_args(argv)
 
     prompt_text = " ".join(args.prompt) if args.prompt else None
@@ -152,7 +172,7 @@ def cmd_chat(argv: list[str]) -> int:
             content = _upload_files(client, [file_path])
             if prompt_text:
                 content.append({"type": "text", "text": prompt_text})
-            task_id = _run_turn(client, task_id, content, args.timeout)
+            task_id = _run_turn(client, task_id, content, args.timeout, args.connectors)
             return 0
 
         if args.project:
@@ -165,11 +185,11 @@ def cmd_chat(argv: list[str]) -> int:
             content = _upload_files(client, files)
             if prompt_text:
                 content.append({"type": "text", "text": prompt_text})
-            task_id = _run_turn(client, task_id, content, args.timeout)
+            task_id = _run_turn(client, task_id, content, args.timeout, args.connectors)
             return 0
 
         if prompt_text:
-            task_id = _run_turn(client, task_id, prompt_text, args.timeout)
+            task_id = _run_turn(client, task_id, prompt_text, args.timeout, args.connectors)
             return 0
 
         # REPL
@@ -182,7 +202,7 @@ def cmd_chat(argv: list[str]) -> int:
                 return 0
             if not line:
                 return 0
-            task_id = _run_turn(client, task_id, line, args.timeout)
+            task_id = _run_turn(client, task_id, line, args.timeout, args.connectors)
     except ManusAPIError as e:
         print_error("Erro", e.message)
         return 1
