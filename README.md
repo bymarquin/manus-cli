@@ -141,8 +141,12 @@ docs/superpowers/specs/
 ## Rodando os testes
 
 ```bash
-.venv/bin/python tests/test_api.py    # ou: pytest tests/
+python -m unittest discover -s tests -v
 ```
+
+13 testes, todos com rede mockada (nada bate na API real): parsing de mensagens, retry/backoff (sucesso após falha transitória, 5xx recuperável, 4xx sem retry, esgotamento de tentativas), filtro de segredos no `--project`, limite de tamanho, e proteção contra path traversal nos anexos.
+
+Roda automaticamente no GitHub Actions a cada push/PR, em Linux/macOS/Windows, Python 3.9 e 3.12.
 
 ## Problema conhecido (aberto com o suporte do Manus) — e o workaround
 
