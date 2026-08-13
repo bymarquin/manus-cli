@@ -9,7 +9,7 @@ from pathlib import Path
 
 from . import config
 from .api import ManusAPIError, ManusClient, last_assistant_entry, last_assistant_message
-from .render import console, err_console, print_assistant, print_error, print_header, print_status
+from .render import console, err_console, print_assistant, print_error, print_header, print_history, print_status
 
 IGNORED_DIRS = {".git", "node_modules", "__pycache__", ".venv", "venv", "dist", "build"}
 MAX_PROJECT_FILE_BYTES = 10 * 1024 * 1024
@@ -57,6 +57,18 @@ def cmd_use(args: list[str]) -> int:
         return 1
     config.save_last_task(task_id)
     console.print(f"[green]OK[/green] usando tarefa \"{detail['task']['title']}\" ({task_id})")
+    return 0
+
+
+def cmd_history(args: list[str]) -> int:
+    limit = int(args[0]) if args else 20
+    client = _client()
+    try:
+        data = client.list_tasks(limit=limit)
+    except ManusAPIError as e:
+        print_error("Erro", e.message)
+        return 1
+    print_history(data.get("data", []))
     return 0
 
 
@@ -250,6 +262,8 @@ def main() -> None:
         sys.exit(cmd_login())
     if argv and argv[0] == "use":
         sys.exit(cmd_use(argv[1:]))
+    if argv and argv[0] == "history":
+        sys.exit(cmd_history(argv[1:]))
     if argv and argv[0] == "status":
         sys.exit(cmd_status(argv[1:]))
     if argv and argv[0] == "result":

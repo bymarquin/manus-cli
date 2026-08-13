@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from rich.console import Console
 from rich.markdown import Markdown
+from rich.table import Table
 
 console = Console()
 err_console = Console(stderr=True, style="bold red")
@@ -25,6 +26,19 @@ def print_header(cwd: str) -> None:
     console.print()
     console.print("[dim]Ctrl+C ou linha vazia para sair.[/dim]")
     console.print()
+
+
+def print_history(tasks: list[dict]) -> None:
+    if not tasks:
+        console.print("[dim](nenhuma tarefa encontrada)[/dim]")
+        return
+    table = Table()
+    table.add_column("id")
+    table.add_column("título")
+    table.add_column("status")
+    for task in tasks:
+        table.add_row(task["id"], task.get("title", ""), task.get("status", ""))
+    console.print(table)
 
 
 def print_status(task: dict) -> None:

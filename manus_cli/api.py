@@ -42,6 +42,9 @@ class ManusClient:
     def validate_key(self) -> None:
         self._call("GET", "/task.list", params={"limit": 1})
 
+    def list_tasks(self, limit: int = 20, order: str = "desc") -> dict:
+        return self._call("GET", "/task.list", params={"limit": limit, "order": order})
+
     def create_task(self, content, project_id: str | None = None, connectors: list[str] | None = None) -> dict:
         message = {"content": content}
         if connectors:
