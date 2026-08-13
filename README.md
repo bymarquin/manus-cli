@@ -72,6 +72,10 @@ manus --project .                    # sobe os arquivos do diretório atual como
 manus use <task_id>                  # fixa uma tarefa existente (ex: criada pela UI web) como a atual
 manus status [task_id]               # status da última tarefa (ou de um task_id específico)
 manus result [task_id]               # última resposta do agente
+manus history [limite]               # lista as tarefas recentes (padrão: 20)
+
+git diff | manus "revisa isso"       # lê stdin como parte do prompt
+manus --json "prompt"                # saída em JSON (task_id/status/content/attachments), pra scripts
 ```
 
 Flags globais:
@@ -79,6 +83,19 @@ Flags globais:
 - `--connector <nome>` (repetível) — habilita um connector já configurado na sua conta Manus (ex: `--connector github`) pra essa mensagem
 
 Qualquer arquivo que o Manus anexar na resposta (código, planilha, imagem etc.) é baixado automaticamente pra `./manus-output/<task_id>/`.
+
+## `.manusrc` por projeto
+
+Crie um `.manusrc` (JSON) na raiz do repo pra fixar a tarefa/connectors padrão desse projeto — sem precisar rodar `manus use` toda vez que entrar na pasta:
+
+```json
+{
+  "task_id": "hpxhrG09FTWCzJ2mYeSyF6",
+  "connectors": ["github"]
+}
+```
+
+Prioridade: `--continue` explícito > `.manusrc` > tarefa nova.
 
 ## Onde fica salvo
 

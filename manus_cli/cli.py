@@ -203,10 +203,16 @@ def cmd_chat(argv: list[str]) -> int:
 
     client = _client(timeout=args.timeout + 10)
 
+    project_rc = config.load_project_rc()
+    connectors = args.connectors or project_rc.get("connectors")
+
     task_id = config.load_last_task() if args.continue_ else None
     if args.continue_ and not task_id:
         err_console.print("Nenhuma tarefa anterior para continuar.")
         return 1
+    if task_id is None and project_rc.get("task_id"):
+        task_id = project_rc["task_id"]
+        err_console.print(f"[dim]usando tarefa de .manusrc ({task_id})[/dim]")
 
     try:
         if args.file:
@@ -217,7 +223,7 @@ def cmd_chat(argv: list[str]) -> int:
             content = _upload_files(client, [file_path])
             if prompt_text:
                 content.append({"type": "text", "text": prompt_text})
-            task_id = _run_turn(client, task_id, content, args.timeout, args.connectors, args.json_output)
+            task_id = _run_turn(client, task_id, content, args.timeout, connectors, args.json_output)
             return 0
 
         if args.project:
@@ -230,11 +236,11 @@ def cmd_chat(argv: list[str]) -> int:
             content = _upload_files(client, files)
             if prompt_text:
                 content.append({"type": "text", "text": prompt_text})
-            task_id = _run_turn(client, task_id, content, args.timeout, args.connectors, args.json_output)
+            task_id = _run_turn(client, task_id, content, args.timeout, connectors, args.json_output)
             return 0
 
         if prompt_text:
-            task_id = _run_turn(client, task_id, prompt_text, args.timeout, args.connectors, args.json_output)
+            task_id = _run_turn(client, task_id, prompt_text, args.timeout, connectors, args.json_output)
             return 0
 
         # REPL
@@ -247,7 +253,7 @@ def cmd_chat(argv: list[str]) -> int:
                 return 0
             if not line:
                 return 0
-            task_id = _run_turn(client, task_id, line, args.timeout, args.connectors, args.json_output)
+            task_id = _run_turn(client, task_id, line, args.timeout, connectors, args.json_output)
     except ManusAPIError as e:
         print_error("Erro", e.message)
         return 1

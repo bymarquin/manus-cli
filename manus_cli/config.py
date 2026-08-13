@@ -36,3 +36,10 @@ def load_last_task() -> str | None:
     if not STATE_FILE.exists():
         return None
     return json.loads(STATE_FILE.read_text()).get("last_task_id")
+
+
+def load_project_rc(cwd: Path | None = None) -> dict:
+    rc_path = (cwd or Path.cwd()) / ".manusrc"
+    if not rc_path.exists():
+        return {}
+    return json.loads(rc_path.read_text())
