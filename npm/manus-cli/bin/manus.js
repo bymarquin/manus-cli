@@ -32,7 +32,7 @@ function resolveBinaryPath() {
     throw new LauncherError(
       `plataforma não suportada (${key}).\n` +
         `Plataformas suportadas via npm: ${supported}.\n` +
-        `Alternativa: instale via pipx — veja https://github.com/bymarquin/manus-cli#instalacao`
+        `Alternativa: instale via pipx — veja https://github.com/bymarquin/manus-cli#instalação`
     );
   }
 
@@ -44,7 +44,7 @@ function resolveBinaryPath() {
       `o pacote nativo "${pkgName}" não foi instalado.\n` +
         'Isso acontece se a instalação usou --no-optional/--omit=optional, ou se o npm\n' +
         'pulou optionalDependencies para essa plataforma. Reinstale com "npm install manus-cli"\n' +
-        'sem excluir dependências opcionais, ou use pipx — veja https://github.com/bymarquin/manus-cli#instalacao'
+        'sem excluir dependências opcionais, ou use pipx — veja https://github.com/bymarquin/manus-cli#instalação'
     );
   }
 
