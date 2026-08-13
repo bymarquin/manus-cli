@@ -81,6 +81,19 @@ def cmd_history(args: list[str]) -> int:
     return 0
 
 
+def cmd_open(args: list[str]) -> int:
+    task_id = args[0] if args else config.load_last_task()
+    if not task_id:
+        err_console.print("Nenhum task_id informado e nenhuma tarefa recente salva.")
+        return 1
+    import webbrowser
+
+    url = f"https://manus.im/app/{task_id}"
+    webbrowser.open(url)
+    console.print(f"[dim]abrindo {url}[/dim]")
+    return 0
+
+
 def cmd_status(args: list[str]) -> int:
     task_id = args[0] if args else config.load_last_task()
     if not task_id:
@@ -287,6 +300,8 @@ def main() -> None:
         sys.exit(cmd_use(argv[1:]))
     if argv and argv[0] == "history":
         sys.exit(cmd_history(argv[1:]))
+    if argv and argv[0] == "open":
+        sys.exit(cmd_open(argv[1:]))
     if argv and argv[0] == "status":
         sys.exit(cmd_status(argv[1:]))
     if argv and argv[0] == "result":
