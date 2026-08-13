@@ -115,7 +115,17 @@ jobs:
           smoke_dir="${RUNNER_TEMP}/manus-smoke-project"
           mkdir -p "$smoke_dir"
           echo "offline smoke" > "$smoke_dir/README.txt"
-          ./dist-bin/${{ matrix.bin }} --project "$smoke_dir" --dry-run
+          set +e
+          ./dist-bin/${{ matrix.bin }} --project "$smoke_dir" --dry-run 2>&1 | tee smoke.log
+          status=${PIPESTATUS[0]}
+          if [ "$status" -ne 0 ]; then
+            while IFS= read -r line; do
+              line=${line//'%'/'%25'}
+              line=${line//$'\r'/'%0D'}
+              echo "::error title=native smoke failure::$line"
+            done < smoke.log
+          fi
+          exit "$status"
 
       - name: Registrar deployment target do binário macOS
         if: startsWith(matrix.pkg, 'manus-cli-darwin-')
