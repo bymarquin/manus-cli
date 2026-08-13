@@ -32,7 +32,7 @@ resposta do agente aqui...
 python3 -m pip install --user pipx
 python3 -m pipx ensurepath
 # reabra o terminal, depois:
-git clone <url-deste-repo>
+git clone https://github.com/bymarquin/manus-cli.git
 cd manus-cli
 pipx install .
 ```
@@ -42,7 +42,7 @@ pipx install .
 py -m pip install --user pipx
 py -m pipx ensurepath
 # reabra o terminal, depois:
-git clone <url-deste-repo>
+git clone https://github.com/bymarquin/manus-cli.git
 cd manus-cli
 pipx install .
 ```
@@ -50,7 +50,7 @@ pipx install .
 ### Opção 2 — venv (sem instalar globalmente)
 
 ```bash
-git clone <url-deste-repo>
+git clone https://github.com/bymarquin/manus-cli.git
 cd manus-cli
 python3 -m venv .venv
 ```
