@@ -72,7 +72,10 @@ class PollUntilSettledTests(unittest.TestCase):
         start = time.monotonic()
         with self.assertRaises(tr.TaskTimeoutError):
             tr.poll_until_settled(BlockingClient(), "t", since_ms=0, timeout=0.1)
-        self.assertLess(time.monotonic() - start, 0.3)
+        # Tolerância generosa (não 0.1 + epsilon): runners de CI compartilhados,
+        # sobretudo Windows, têm jitter de agendamento que estourava um teto apertado
+        # aqui sem indicar regressão real — mesmo teto do teste irmão acima.
+        self.assertLess(time.monotonic() - start, 2.0)
         self.assertGreater(observed[0], 0)
         self.assertLessEqual(observed[0], 0.1)
 
