@@ -141,6 +141,22 @@ def print_connectors(connectors: list[dict]) -> None:
     console.print(table)
 
 
+def print_projects(projects: list[dict]) -> None:
+    if not projects:
+        console.print(f"[muted]{_DASH} nenhum projeto criado nesta conta {_DASH}[/muted]")
+        return
+    table = Table(box=box.SIMPLE_HEAD, header_style="accent", border_style="muted")
+    table.add_column("id")
+    table.add_column("nome")
+    table.add_column("instrução")
+    for p in projects:
+        instruction = p.get("instruction") or ""
+        if len(instruction) > 60:
+            instruction = instruction[:57] + "..."
+        table.add_row(p.get("id", ""), p.get("name", ""), instruction)
+    console.print(table)
+
+
 def print_dry_run(selected: list, skipped: list, total_bytes: int) -> None:
     console.print(
         f"[accent]{_DASH} dry-run: {len(selected)} arquivo(s), {total_bytes} bytes, "

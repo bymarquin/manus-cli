@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -192,6 +193,94 @@ class HttpErrorHandlingTests(unittest.TestCase):
         except ManusAPIError as e:
             self.assertNotIn("sk-super-secret-key-value", str(e))
             self.assertNotIn("sk-super-secret-key-value", e.message)
+
+
+class TaskLifecycleAndProjectEndpointsTests(unittest.TestCase):
+    """task.stop/delete/update and project.create/list — request shape, and that
+    these are treated as idempotent (safe to retry on ambiguous failure), unlike
+    task.create/sendMessage."""
+
+    def _capture(self, response_extra=None):
+        captured = {}
+
+        def handler(request):
+            captured["method"] = request.method
+            captured["path"] = request.url.path
+            captured["body"] = json.loads(request.content) if request.content else None
+            body = {"ok": True, "request_id": "r1"}
+            if response_extra:
+                body.update(response_extra)
+            return httpx.Response(200, json=body)
+
+        return _mock_client(handler), captured
+
+    def test_stop_task_posts_task_id(self):
+        client, captured = self._capture()
+        client.stop_task("t1")
+        self.assertEqual(captured["method"], "POST")
+        self.assertTrue(captured["path"].endswith("/task.stop"))
+        self.assertEqual(captured["body"], {"task_id": "t1"})
+
+    def test_delete_task_posts_task_id(self):
+        client, captured = self._capture()
+        client.delete_task("t1")
+        self.assertTrue(captured["path"].endswith("/task.delete"))
+        self.assertEqual(captured["body"], {"task_id": "t1"})
+
+    def test_update_task_only_sends_provided_fields(self):
+        client, captured = self._capture()
+        client.update_task("t1", title="Novo título")
+        self.assertEqual(captured["body"], {"task_id": "t1", "title": "Novo título"})
+
+    def test_update_task_sends_all_fields_when_given(self):
+        client, captured = self._capture()
+        client.update_task("t1", title="X", share_visibility="public", visible_in_task_list=False)
+        self.assertEqual(
+            captured["body"],
+            {"task_id": "t1", "title": "X", "share_visibility": "public", "enable_visible_in_task_list": False},
+        )
+
+    def test_create_project_omits_instruction_when_absent(self):
+        client, captured = self._capture()
+        client.create_project("Meu Projeto")
+        self.assertEqual(captured["body"], {"name": "Meu Projeto"})
+
+    def test_create_project_includes_instruction_when_given(self):
+        client, captured = self._capture()
+        client.create_project("Meu Projeto", instruction="Sempre responda em português")
+        self.assertEqual(captured["body"], {"name": "Meu Projeto", "instruction": "Sempre responda em português"})
+
+    def test_list_projects_is_a_get(self):
+        client, captured = self._capture()
+        client.list_projects()
+        self.assertEqual(captured["method"], "GET")
+        self.assertTrue(captured["path"].endswith("/project.list"))
+
+    def _assert_retries_on_ambiguous_drop(self, method_name, args):
+        calls = {"n": 0}
+
+        def handler(request):
+            calls["n"] += 1
+            if calls["n"] < 2:
+                raise httpx.ReadTimeout("simulated", request=request)
+            return httpx.Response(200, json={"ok": True, "request_id": "r1"})
+
+        client = _mock_client(handler)
+        with patch("manus_cli.api.time.sleep"):
+            getattr(client, method_name)(*args)
+        self.assertEqual(calls["n"], 2)
+
+    def test_stop_delete_update_retry_on_ambiguous_connection_drop(self):
+        # Unlike task.create/sendMessage, these must retry when the connection drops
+        # after the request may have been sent — repeating stop/delete/update on an
+        # already-applied change is a no-op, not a duplicated side effect.
+        for method_name, args in [
+            ("stop_task", ("t1",)),
+            ("delete_task", ("t1",)),
+            ("update_task", ("t1",)),
+        ]:
+            with self.subTest(method=method_name):
+                self._assert_retries_on_ambiguous_drop(method_name, args)
 
 
 class ClientLifecycleTests(unittest.TestCase):

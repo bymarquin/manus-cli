@@ -100,11 +100,22 @@ manus result [task_id]               # última resposta do agente
 manus history [limite]               # tarefas recentes (padrão: 20)
 manus doctor                         # diagnóstico: versão, API key, conectividade, config
 
+manus stop [task_id]                 # para uma tarefa em execução (retomável depois)
+manus delete <task_id> [--yes]       # apaga uma tarefa permanentemente (pede confirmação sem --yes)
+manus update <task_id> --title "X"   # renomeia a tarefa
+manus update <task_id> --share team  # muda visibilidade: private (padrão) | team | public
+manus update <task_id> --hide        # esconde da lista de tarefas na webapp (--show pra reverter)
+
+manus project create "Backend" --instruction "responda sempre em português"
+manus project list                   # projetos da conta (id, nome, instrução)
+manus --in-project Backend "prompt"  # cria a tarefa já associada a esse projeto (aplica a instrução dele)
+manus --agent-profile manus-1.6-max "prompt"  # tier de capacidade da tarefa (manus-1.6 | manus-1.6-lite | manus-1.6-max)
+
 git diff | manus "revisa isso"       # lê stdin como parte do prompt
 manus --json "prompt"                # stdout é só uma linha JSON, pra scripts
 ```
 
-Variável `MANUS_API_KEY` tem prioridade sobre a key salva em disco (útil em CI). Flags úteis: `--timeout <s>` (padrão 300), `--allow-secret` (desliga o filtro de segredo), `--no-gitignore`.
+Variável `MANUS_API_KEY` tem prioridade sobre a key salva em disco (útil em CI). Flags úteis: `--timeout <s>` (padrão 300), `--allow-secret` (desliga o filtro de segredo), `--no-gitignore`, `--in-project`/`--agent-profile` (só têm efeito ao criar uma tarefa nova — ignoradas em `--continue`/`--task`).
 
 Anexos que o Manus devolver na resposta vão automaticamente pra `./manus-output/<task_id>/` (nunca sobrescreve, nunca passa de 200MB por arquivo).
 
@@ -116,7 +127,7 @@ Anexos que o Manus devolver na resposta vão automaticamente pra `./manus-output
 | `waiting` | parou esperando uma ação sua (veja `manus confirm`) | `2` |
 | `error` | falhou | `1` |
 
-**No modo chat (`manus`):** `@` sugere arquivos do projeto (respeitando `.gitignore`, sem expor segredos/symlinks); `/` sugere comandos (`/status /use /history /open /confirm /help /exit`). Em terminais sem suporte a Unicode, os glifos caem automaticamente pra ASCII.
+**No modo chat (`manus`):** `@` sugere arquivos do projeto (respeitando `.gitignore`, sem expor segredos/symlinks); `/` sugere comandos (`/status /use /history /open /confirm /stop /help /exit`). Em terminais sem suporte a Unicode, os glifos caem automaticamente pra ASCII.
 
 ## `.manusrc` por projeto
 

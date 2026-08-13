@@ -12,7 +12,7 @@ from prompt_toolkit.completion import Completer, Completion
 from prompt_toolkit.styles import Style
 
 from . import config, files, task_runner
-from .api import ManusAPIError, ManusClient
+from .api import AGENT_PROFILES, SHARE_VISIBILITIES, ManusAPIError, ManusClient
 from .config import ConfigError
 from .render import (
     PROMPT,
@@ -25,6 +25,7 @@ from .render import (
     print_fail,
     print_header,
     print_history,
+    print_projects,
     print_status,
     print_success,
     print_task_error,
@@ -75,6 +76,27 @@ def _resolve_connectors(client: ManusClient, raw_values: list[str] | None) -> li
             )
         resolved.append(matches[0]["id"])
     return resolved
+
+
+def _resolve_project(client: ManusClient, raw_value: str | None) -> str | None:
+    """UUID passes through; anything else is resolved by name via project.list."""
+    if not raw_value:
+        return None
+    if _UUID_RE.match(raw_value):
+        return raw_value
+    projects = client.list_projects().get("data", [])
+    matches = [p for p in projects if p.get("name", "").lower() == raw_value.lower()]
+    if not matches:
+        matches = [p for p in projects if raw_value.lower() in p.get("name", "").lower()]
+    if not matches:
+        names = ", ".join(p.get("name", "?") for p in projects) or "(nenhum criado)"
+        raise ManusAPIError("project_not_found", f"projeto {raw_value!r} não encontrado. Disponíveis: {names}")
+    if len(matches) > 1:
+        names = ", ".join(p.get("name", "?") for p in matches)
+        raise ManusAPIError(
+            "project_ambiguous", f"{raw_value!r} corresponde a vários projetos ({names}); use o id direto"
+        )
+    return matches[0]["id"]
 
 
 # ---------------------------------------------------------------------------
@@ -316,6 +338,108 @@ def cmd_result(argv: list[str]) -> int:
     return 0
 
 
+def cmd_stop(argv: list[str]) -> int:
+    parser = argparse.ArgumentParser(prog="manus stop", description="Para uma tarefa em execução (task.stop)")
+    parser.add_argument("task_id", nargs="?", default=None)
+    args = parser.parse_args(argv)
+
+    task_id = args.task_id or config.load_last_task()
+    if not task_id:
+        print_fail("Nenhum task_id informado e nenhuma tarefa recente salva.")
+        return 1
+    with _client() as client:
+        try:
+            client.stop_task(task_id)
+        except ManusAPIError as e:
+            print_error("Erro", e.message)
+            return 1
+    print_success(f"tarefa {task_id} parada (retomável com --continue/manus use)")
+    return 0
+
+
+def cmd_delete(argv: list[str]) -> int:
+    parser = argparse.ArgumentParser(
+        prog="manus delete", description="Apaga uma tarefa permanentemente (task.delete)"
+    )
+    parser.add_argument("task_id")
+    parser.add_argument("--yes", action="store_true", help="não pede confirmação")
+    args = parser.parse_args(argv)
+
+    if not args.yes:
+        answer = console.input(f"Apagar {args.task_id} permanentemente? Essa ação não pode ser desfeita. [y/N] ")
+        if answer.strip().lower() not in ("y", "yes", "s", "sim"):
+            print_fail("Cancelado.")
+            return 1
+
+    with _client() as client:
+        try:
+            client.delete_task(args.task_id)
+        except ManusAPIError as e:
+            print_error("Erro", e.message)
+            return 1
+    print_success(f"tarefa {args.task_id} apagada")
+    return 0
+
+
+def cmd_update(argv: list[str]) -> int:
+    parser = argparse.ArgumentParser(prog="manus update", description="Atualiza título/visibilidade de uma tarefa")
+    parser.add_argument("task_id")
+    parser.add_argument("--title", default=None)
+    parser.add_argument("--share", choices=SHARE_VISIBILITIES, default=None, dest="share_visibility")
+    visibility = parser.add_mutually_exclusive_group()
+    visibility.add_argument("--hide", action="store_true", help="esconde da lista de tarefas na webapp")
+    visibility.add_argument("--show", action="store_true", help="mostra na lista de tarefas na webapp")
+    args = parser.parse_args(argv)
+
+    if args.title is None and args.share_visibility is None and not args.hide and not args.show:
+        print_fail("Nada pra atualizar — use --title, --share, --hide ou --show.")
+        return 1
+
+    visible_in_task_list = True if args.show else (False if args.hide else None)
+    with _client() as client:
+        try:
+            client.update_task(
+                args.task_id,
+                title=args.title,
+                share_visibility=args.share_visibility,
+                visible_in_task_list=visible_in_task_list,
+            )
+        except ManusAPIError as e:
+            print_error("Erro", e.message)
+            return 1
+    print_success(f"tarefa {args.task_id} atualizada")
+    return 0
+
+
+def cmd_project(argv: list[str]) -> int:
+    parser = argparse.ArgumentParser(prog="manus project")
+    sub = parser.add_subparsers(dest="action", required=True)
+    create_parser = sub.add_parser("create")
+    create_parser.add_argument("name")
+    create_parser.add_argument("--instruction", default=None, help="instrução aplicada a toda tarefa do projeto")
+    sub.add_parser("list")
+    args = parser.parse_args(argv)
+
+    with _client() as client:
+        if args.action == "create":
+            try:
+                resp = client.create_project(args.name, instruction=args.instruction)
+            except ManusAPIError as e:
+                print_error("Erro", e.message)
+                return 1
+            project = resp["project"]
+            print_success(f"projeto \"{project['name']}\" criado ({project['id']})")
+            return 0
+        # action == "list"
+        try:
+            data = client.list_projects()
+        except ManusAPIError as e:
+            print_error("Erro", e.message)
+            return 1
+        print_projects(data.get("data", []))
+    return 0
+
+
 # ---------------------------------------------------------------------------
 # Attachments
 # ---------------------------------------------------------------------------
@@ -355,11 +479,16 @@ def _run_turn(
     timeout: float,
     connectors: list[str] | None = None,
     json_output: bool = False,
+    project_id: str | None = None,
+    agent_profile: str | None = None,
 ) -> tuple[str | None, int]:
     """Runs one create/send + poll cycle. Returns (task_id, exit_code).
 
     Exit codes: 0 = stopped (success), 1 = error or network failure,
     2 = waiting (needs a reply or manus confirm) — never silently 0.
+
+    project_id/agent_profile only take effect when a task is being *created*
+    (task_id is None going in) — the API ignores them on task.sendMessage.
     """
 
     def _make_on_event(live):
@@ -370,13 +499,20 @@ def _run_turn(
 
         return _cb
 
+    create_kwargs = {"project_id": project_id, "agent_profile": agent_profile}
     try:
         if json_output:
-            outcome = task_runner.run_turn(client, task_id, content, timeout, connectors=connectors)
+            outcome = task_runner.run_turn(client, task_id, content, timeout, connectors=connectors, **create_kwargs)
         else:
             with console.status("[accent]Manus trabalhando...[/accent]", spinner="dots") as live:
                 outcome = task_runner.run_turn(
-                    client, task_id, content, timeout, connectors=connectors, on_event=_make_on_event(live)
+                    client,
+                    task_id,
+                    content,
+                    timeout,
+                    connectors=connectors,
+                    on_event=_make_on_event(live),
+                    **create_kwargs,
                 )
     except task_runner.TaskTimeoutError as e:
         print_fail(str(e))
@@ -459,6 +595,7 @@ _SLASH_COMMANDS: list[tuple[str, str]] = [
     ("history", ""),
     ("open", "[id]"),
     ("confirm", "<event_id> [json]"),
+    ("stop", ""),
     ("help", ""),
     ("exit", ""),
 ]
@@ -581,6 +718,18 @@ def _run_slash_command(client: ManusClient, task_id: str | None, line: str) -> t
         print_history(data.get("data", []))
         return task_id, False
 
+    if cmd == "stop":
+        if not task_id:
+            print_fail("Nenhuma tarefa ativa ainda.")
+            return task_id, False
+        try:
+            client.stop_task(task_id)
+        except ManusAPIError as e:
+            print_error("Erro", e.message)
+            return task_id, False
+        print_success(f"tarefa {task_id} parada (retomável normalmente)")
+        return task_id, False
+
     if cmd == "confirm":
         if not task_id:
             print_fail("Nenhuma tarefa ativa ainda.")
@@ -639,6 +788,14 @@ def _build_chat_parser() -> argparse.ArgumentParser:
     parser.add_argument("--allow-secret", dest="allow_secret", action="store_true")
     parser.add_argument("--dry-run", dest="dry_run", action="store_true", help="só mostra o que seria enviado")
     parser.add_argument("--no-gitignore", dest="no_gitignore", action="store_true")
+    parser.add_argument(
+        "--in-project", dest="in_project", default=None, metavar="NOME-OU-ID",
+        help="associa a tarefa (se criada agora) a um Manus Project — aplica a instrução dele automaticamente",
+    )
+    parser.add_argument(
+        "--agent-profile", dest="agent_profile", choices=AGENT_PROFILES, default=None,
+        help="tier de capacidade do agente pra tarefa criada agora (ignorado em --continue/--task)",
+    )
     return parser
 
 
@@ -675,6 +832,7 @@ def cmd_chat(argv: list[str]) -> int:
         raw_connectors = args.connectors or project_rc.get("connector_names") or project_rc.get("connectors")
         try:
             connectors = _resolve_connectors(client, raw_connectors)
+            manus_project_id = _resolve_project(client, args.in_project)
         except ManusAPIError as e:
             print_error("Erro", e.message)
             return 1
@@ -705,7 +863,10 @@ def cmd_chat(argv: list[str]) -> int:
                 content = _upload_paths(client, [file_path])
                 if prompt_text:
                     content.append({"type": "text", "text": prompt_text})
-                _, exit_code = _run_turn(client, task_id, content, args.timeout, connectors, args.json_output)
+                _, exit_code = _run_turn(
+                    client, task_id, content, args.timeout, connectors, args.json_output,
+                    project_id=manus_project_id, agent_profile=args.agent_profile,
+                )
                 return exit_code
 
             if args.project:
@@ -734,11 +895,17 @@ def cmd_chat(argv: list[str]) -> int:
                 if not content:
                     print_fail("Nada para enviar (nenhum arquivo passou nos filtros e nenhum prompt foi dado).")
                     return 1
-                _, exit_code = _run_turn(client, task_id, content, args.timeout, connectors, args.json_output)
+                _, exit_code = _run_turn(
+                    client, task_id, content, args.timeout, connectors, args.json_output,
+                    project_id=manus_project_id, agent_profile=args.agent_profile,
+                )
                 return exit_code
 
             if prompt_text:
-                _, exit_code = _run_turn(client, task_id, prompt_text, args.timeout, connectors, args.json_output)
+                _, exit_code = _run_turn(
+                    client, task_id, prompt_text, args.timeout, connectors, args.json_output,
+                    project_id=manus_project_id, agent_profile=args.agent_profile,
+                )
                 return exit_code
 
             # REPL
@@ -767,7 +934,10 @@ def cmd_chat(argv: list[str]) -> int:
                     turn_content.append({"type": "text", "text": line})
                 else:
                     turn_content = line
-                task_id, _ = _run_turn(client, task_id, turn_content, args.timeout, connectors, args.json_output)
+                task_id, _ = _run_turn(
+                    client, task_id, turn_content, args.timeout, connectors, args.json_output,
+                    project_id=manus_project_id, agent_profile=args.agent_profile,
+                )
         except ManusAPIError as e:
             print_error("Erro", e.message)
             return 1
@@ -790,6 +960,10 @@ _SUBCOMMANDS = {
     "doctor": cmd_doctor,
     "status": cmd_status,
     "result": cmd_result,
+    "stop": cmd_stop,
+    "delete": cmd_delete,
+    "update": cmd_update,
+    "project": cmd_project,
 }
 
 

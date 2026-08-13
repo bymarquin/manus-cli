@@ -22,8 +22,16 @@ RATE_LIMITS_PER_MIN = {
     "task.list": 100,
     "task.listMessages": 100,
     "task.confirmAction": 40,
+    "task.update": 40,
+    "task.stop": 40,
+    "task.delete": 40,
+    "project.create": 40,
+    "project.list": 100,
     "file.upload": 40,
 }
+
+AGENT_PROFILES = ("manus-1.6", "manus-1.6-lite", "manus-1.6-max")
+SHARE_VISIBILITIES = ("private", "team", "public")
 
 MAX_DOWNLOAD_BYTES = 200 * 1024 * 1024
 FILE_UPLOADS_PER_MINUTE_BUDGET = 35
@@ -278,6 +286,41 @@ class ManusClient:
 
     def task_detail(self, task_id: str) -> dict:
         return self._call("GET", "/task.detail", params={"task_id": task_id})
+
+    def stop_task(self, task_id: str) -> dict:
+        # Idempotent in effect (stopping an already-stopped task is a no-op on
+        # the server, not a duplicated side effect), unlike create/sendMessage.
+        return self._call("POST", "/task.stop", json={"task_id": task_id}, idempotent=True)
+
+    def delete_task(self, task_id: str) -> dict:
+        # Same reasoning as stop_task: repeating a delete just re-confirms it's gone.
+        return self._call("POST", "/task.delete", json={"task_id": task_id}, idempotent=True)
+
+    def update_task(
+        self,
+        task_id: str,
+        *,
+        title: str | None = None,
+        share_visibility: str | None = None,
+        visible_in_task_list: bool | None = None,
+    ) -> dict:
+        body: dict = {"task_id": task_id}
+        if title is not None:
+            body["title"] = title
+        if share_visibility is not None:
+            body["share_visibility"] = share_visibility
+        if visible_in_task_list is not None:
+            body["enable_visible_in_task_list"] = visible_in_task_list
+        return self._call("POST", "/task.update", json=body, idempotent=True)
+
+    def create_project(self, name: str, instruction: str | None = None) -> dict:
+        body: dict = {"name": name}
+        if instruction:
+            body["instruction"] = instruction
+        return self._call("POST", "/project.create", json=body, idempotent=False)
+
+    def list_projects(self) -> dict:
+        return self._call("GET", "/project.list")
 
     def list_messages(
         self,

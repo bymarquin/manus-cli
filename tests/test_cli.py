@@ -6,7 +6,7 @@ import tempfile
 import unittest
 from contextlib import redirect_stdout
 from pathlib import Path
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 from _helpers import IsolatedConfigTestCase
 from prompt_toolkit.document import Document
@@ -151,6 +151,120 @@ class ResolveConnectorsTests(unittest.TestCase):
         client.list_connectors.assert_not_called()
 
 
+class ResolveProjectTests(unittest.TestCase):
+    def _client_with_projects(self, projects):
+        client = MagicMock()
+        client.list_projects.return_value = {"data": projects}
+        return client
+
+    def test_uuid_passes_through_without_calling_api(self):
+        client = MagicMock()
+        result = cli._resolve_project(client, "356d5bc1-fb9f-4fa1-babb-05039dc09d11")
+        self.assertEqual(result, "356d5bc1-fb9f-4fa1-babb-05039dc09d11")
+        client.list_projects.assert_not_called()
+
+    def test_name_resolves_case_insensitively(self):
+        client = self._client_with_projects([{"id": "proj-1", "name": "Backend"}])
+        self.assertEqual(cli._resolve_project(client, "backend"), "proj-1")
+
+    def test_unknown_name_raises_clear_error(self):
+        client = self._client_with_projects([{"id": "proj-1", "name": "Backend"}])
+        with self.assertRaises(ManusAPIError) as ctx:
+            cli._resolve_project(client, "notthere")
+        self.assertEqual(ctx.exception.code, "project_not_found")
+        self.assertIn("Backend", ctx.exception.message)
+
+    def test_ambiguous_name_raises_clear_error(self):
+        client = self._client_with_projects([{"id": "p1", "name": "Alpha One"}, {"id": "p2", "name": "Alpha Two"}])
+        with self.assertRaises(ManusAPIError) as ctx:
+            cli._resolve_project(client, "alpha")
+        self.assertEqual(ctx.exception.code, "project_ambiguous")
+
+    def test_none_input_returns_none(self):
+        client = MagicMock()
+        self.assertIsNone(cli._resolve_project(client, None))
+        client.list_projects.assert_not_called()
+
+
+class TaskLifecycleCommandTests(IsolatedConfigTestCase):
+    def test_stop_calls_client_and_reports_success(self):
+        client = MagicMock()
+        with patch("manus_cli.cli._client") as client_factory:
+            client_factory.return_value.__enter__.return_value = client
+            exit_code = cli.cmd_stop(["abc"])
+        self.assertEqual(exit_code, 0)
+        client.stop_task.assert_called_once_with("abc")
+
+    def test_stop_without_task_id_or_last_task_fails_cleanly(self):
+        exit_code = cli.cmd_stop([])
+        self.assertEqual(exit_code, 1)
+
+    def test_delete_without_yes_cancels_on_non_affirmative_answer(self):
+        client = MagicMock()
+        with (
+            patch("manus_cli.cli._client") as client_factory,
+            patch("manus_cli.cli.console.input", return_value="n"),
+        ):
+            client_factory.return_value.__enter__.return_value = client
+            exit_code = cli.cmd_delete(["abc"])
+        self.assertEqual(exit_code, 1)
+        client.delete_task.assert_not_called()
+
+    def test_delete_with_yes_skips_prompt_and_calls_client(self):
+        client = MagicMock()
+        with patch("manus_cli.cli._client") as client_factory:
+            client_factory.return_value.__enter__.return_value = client
+            exit_code = cli.cmd_delete(["abc", "--yes"])
+        self.assertEqual(exit_code, 0)
+        client.delete_task.assert_called_once_with("abc")
+
+    def test_update_with_no_flags_fails_without_calling_client(self):
+        client = MagicMock()
+        with patch("manus_cli.cli._client") as client_factory:
+            client_factory.return_value.__enter__.return_value = client
+            exit_code = cli.cmd_update(["abc"])
+        self.assertEqual(exit_code, 1)
+        client.update_task.assert_not_called()
+
+    def test_update_passes_title_and_share_through(self):
+        client = MagicMock()
+        with patch("manus_cli.cli._client") as client_factory:
+            client_factory.return_value.__enter__.return_value = client
+            exit_code = cli.cmd_update(["abc", "--title", "Novo", "--share", "team"])
+        self.assertEqual(exit_code, 0)
+        client.update_task.assert_called_once_with(
+            "abc", title="Novo", share_visibility="team", visible_in_task_list=None
+        )
+
+    def test_update_hide_and_show_are_mutually_exclusive(self):
+        with self.assertRaises(SystemExit) as ctx:
+            cli.cmd_update(["abc", "--hide", "--show"])
+        self.assertEqual(ctx.exception.code, 2)
+
+    def test_project_create_reports_success_with_id(self):
+        client = MagicMock()
+        client.create_project.return_value = {"project": {"id": "proj-1", "name": "Backend"}}
+        with patch("manus_cli.cli._client") as client_factory:
+            client_factory.return_value.__enter__.return_value = client
+            exit_code = cli.cmd_project(["create", "Backend", "--instruction", "seja conciso"])
+        self.assertEqual(exit_code, 0)
+        client.create_project.assert_called_once_with("Backend", instruction="seja conciso")
+
+    def test_project_list_calls_client(self):
+        client = MagicMock()
+        client.list_projects.return_value = {"data": []}
+        with patch("manus_cli.cli._client") as client_factory:
+            client_factory.return_value.__enter__.return_value = client
+            exit_code = cli.cmd_project(["list"])
+        self.assertEqual(exit_code, 0)
+        client.list_projects.assert_called_once()
+
+    def test_project_requires_subcommand(self):
+        with self.assertRaises(SystemExit) as ctx:
+            cli.cmd_project([])
+        self.assertEqual(ctx.exception.code, 2)
+
+
 class SlashCommandTests(IsolatedConfigTestCase):
     def _client(self):
         client = MagicMock()
@@ -200,6 +314,18 @@ class SlashCommandTests(IsolatedConfigTestCase):
         client = self._client()
         _task_id, _should_exit = cli._run_slash_command(client, "abc", "/confirm evt1 {not json")
         client.confirm_action.assert_not_called()
+
+    def test_stop_without_active_task_fails_cleanly(self):
+        task_id, should_exit = cli._run_slash_command(self._client(), None, "/stop")
+        self.assertIsNone(task_id)
+        self.assertFalse(should_exit)
+
+    def test_stop_calls_client_and_keeps_task_active(self):
+        client = self._client()
+        task_id, should_exit = cli._run_slash_command(client, "abc", "/stop")
+        client.stop_task.assert_called_once_with("abc")
+        self.assertEqual(task_id, "abc")
+        self.assertFalse(should_exit)
 
 
 class JsonOutputStdoutDisciplineTests(IsolatedConfigTestCase):

@@ -18,7 +18,7 @@ tests/
   test_task_runner.py # polling paginado, eventos malformados, timeout global, waiting/error/confirm
   test_files.py       # .gitignore, symlink, segredo, colisão de nome, limites, pacing de upload
   test_config.py      # escrita atômica, permissão, JSON corrompido, validação de .manusrc
-  test_cli.py         # menções @, comandos /, resolução de connector, exit codes, disciplina do --json
+  test_cli.py         # menções @, comandos /, resolução de connector/projeto, stop/delete/update/project, exit codes, disciplina do --json
   test_render.py      # detecção de encoding e fallback ASCII dos glifos Unicode
 packaging/
   requirements.txt      # pins de build (pyinstaller, pip-licenses) — renovado via Dependabot
@@ -47,7 +47,7 @@ docs/superpowers/specs/
 python -m unittest discover -s tests -v
 ```
 
-106 testes, todos com rede mockada via `httpx.MockTransport` ou client mockado (nada bate na API real) e config isolada em diretório temporário (nenhum teste toca `~/.config/manus`). Cobrem: retry idempotente vs. não-idempotente (o ponto mais importante — nunca duplicar `task.create`/`sendMessage`), `429`+`Retry-After`+jitter, corpo HTTP inválido/inesperado, ciclo de vida `stopped`/`waiting`/`error`, `.gitignore`, symlink escapando da raiz, filtro de segredo (inclusive no autocomplete e em `@menção`), dropdown de `/` e `@`, fallback ASCII em consoles Windows, colisão de nome, limites de tamanho/quantidade, download seguro, config/`.manusrc` corrompidos, resolução de connector por nome, e que `--json` só imprime JSON no stdout.
+131 testes, todos com rede mockada via `httpx.MockTransport` ou client mockado (nada bate na API real) e config isolada em diretório temporário (nenhum teste toca `~/.config/manus`). Cobrem: retry idempotente vs. não-idempotente (o ponto mais importante — nunca duplicar `task.create`/`sendMessage`; `task.stop`/`delete`/`update` são idempotentes em efeito e retryam em falha ambígua), `429`+`Retry-After`+jitter, corpo HTTP inválido/inesperado, ciclo de vida `stopped`/`waiting`/`error`, `.gitignore`, symlink escapando da raiz, filtro de segredo (inclusive no autocomplete e em `@menção`), dropdown de `/` e `@`, fallback ASCII em consoles Windows, colisão de nome, limites de tamanho/quantidade, download seguro, config/`.manusrc` corrompidos, resolução de connector/projeto por nome, confirmação interativa de `delete`, e que `--json` só imprime JSON no stdout.
 
 Roda automaticamente no GitHub Actions a cada push/PR ([`tests.yml`](.github/workflows/tests.yml)): testes (Linux/macOS/Windows, Python 3.9 e 3.12), lint (`ruff`), tipagem (`mypy`) e build+smoke do wheel.
 
