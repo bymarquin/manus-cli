@@ -77,6 +77,7 @@ manus status [task_id]               # status da última tarefa (ou de um task_i
 manus result [task_id]               # última resposta do agente
 manus history [limite]               # lista as tarefas recentes (padrão: 20)
 manus open [task_id]                 # abre a tarefa no navegador
+manus doctor                         # diagnóstico: versão, API key, conectividade, config
 
 git diff | manus "revisa isso"       # lê stdin como parte do prompt
 manus --json "prompt"                # saída em JSON (task_id/status/content/attachments), pra scripts

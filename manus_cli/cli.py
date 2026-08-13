@@ -117,6 +117,46 @@ def cmd_open(args: list[str]) -> int:
     return 0
 
 
+def cmd_doctor(args: list[str]) -> int:
+    import importlib.metadata
+
+    ok = True
+
+    try:
+        version = importlib.metadata.version("manus-cli")
+    except importlib.metadata.PackageNotFoundError:
+        version = "dev (não instalado como pacote)"
+    console.print(f"[bold]versão[/bold]: {version}")
+
+    api_key = config.load_api_key()
+    key_source = "MANUS_API_KEY" if os.environ.get("MANUS_API_KEY") else "credentials.json"
+    if not api_key:
+        console.print("[red]✗[/red] API key: nenhuma configurada (rode: manus login)")
+        ok = False
+    else:
+        console.print(f"[green]✓[/green] API key: presente ({key_source}, {config.mask(api_key)})")
+        try:
+            ManusClient(api_key).validate_key()
+            console.print("[green]✓[/green] Conectividade com api.manus.ai: ok")
+        except ManusAPIError as e:
+            console.print(f"[red]✗[/red] Conectividade: key rejeitada ({e.message})")
+            ok = False
+        except Exception as e:
+            console.print(f"[red]✗[/red] Conectividade: falha de rede ({e})")
+            ok = False
+
+    console.print(f"[bold]config[/bold]: {config.CONFIG_DIR}")
+    last_task = config.load_last_task()
+    aliases = config.load_aliases()
+    console.print(f"[dim]última tarefa: {last_task or '(nenhuma)'}, apelidos: {len(aliases)}[/dim]")
+
+    project_rc = config.load_project_rc()
+    if project_rc:
+        console.print(f"[dim].manusrc neste diretório: {project_rc}[/dim]")
+
+    return 0 if ok else 1
+
+
 def cmd_status(args: list[str]) -> int:
     task_id = args[0] if args else config.load_last_task()
     if not task_id:
@@ -333,6 +373,8 @@ def main() -> None:
         sys.exit(cmd_open(argv[1:]))
     if argv and argv[0] == "alias":
         sys.exit(cmd_alias(argv[1:]))
+    if argv and argv[0] == "doctor":
+        sys.exit(cmd_doctor(argv[1:]))
     if argv and argv[0] == "status":
         sys.exit(cmd_status(argv[1:]))
     if argv and argv[0] == "result":
