@@ -542,5 +542,27 @@ class CodingAgentCliTests(IsolatedConfigTestCase):
         self.assertIs(cli._SUBCOMMANDS["code"], cli.cmd_code)
 
 
+class CheckProvisioningTests(unittest.TestCase):
+    def test_reports_ok_and_cleans_up_when_task_is_findable(self):
+        client = MagicMock()
+        client.create_task.return_value = {"task_id": "t1", "request_id": "r1"}
+        self.assertTrue(cli._check_provisioning(client))
+        client.task_detail.assert_called_once_with("t1")
+        client.delete_task.assert_called_once_with("t1")
+
+    def test_fails_when_task_detail_cant_find_a_just_created_task(self):
+        client = MagicMock()
+        client.create_task.return_value = {"task_id": "t1", "request_id": "r1"}
+        client.task_detail.side_effect = ManusAPIError("not_found", "task not found")
+        self.assertFalse(cli._check_provisioning(client))
+        client.delete_task.assert_not_called()
+
+    def test_fails_when_create_itself_errors(self):
+        client = MagicMock()
+        client.create_task.side_effect = ManusAPIError("rate_limited", "too many requests")
+        self.assertFalse(cli._check_provisioning(client))
+        client.task_detail.assert_not_called()
+
+
 if __name__ == "__main__":
     unittest.main()

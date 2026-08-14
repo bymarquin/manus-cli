@@ -250,8 +250,45 @@ def cmd_confirm(argv: list[str]) -> int:
     return 0
 
 
+def _check_provisioning(client: ManusClient) -> bool:
+    """Detects the ok:true-but-task-doesn't-exist provisioning bug: task.create
+    succeeds with a task_id, but task.detail can't find it right after."""
+    try:
+        created = client.create_task("manus doctor: verificação de provisionamento (pode ignorar/apagar)")
+    except ManusAPIError as e:
+        print_fail(f"Provisionamento: task.create falhou ({e.message})")
+        return False
+    task_id = created["task_id"]
+    request_id = created.get("request_id", "?")
+    try:
+        client.task_detail(task_id)
+    except ManusAPIError as e:
+        print_fail(
+            f"Provisionamento: task.create respondeu ok:true (task_id={task_id}, "
+            f"request_id={request_id}) mas task.detail não encontra a task logo em seguida "
+            f"({e.message}). Isso é um bug do lado do servidor Manus, não do CLI — reporte ao "
+            f"suporte com o request_id acima."
+        )
+        return False
+    print_success(f"Provisionamento: task criada e confirmada (task_id={task_id})")
+    try:
+        client.delete_task(task_id)
+    except ManusAPIError:
+        pass
+    return True
+
+
 def cmd_doctor(argv: list[str]) -> int:
     import importlib.metadata
+
+    parser = argparse.ArgumentParser(prog="manus doctor")
+    parser.add_argument(
+        "--check-provisioning",
+        action="store_true",
+        help="cria uma task de teste e confere se ela existe de verdade logo em seguida "
+        "(gasta cota de task.create; detecta o bug de task.create ok:true sem provisionar a task)",
+    )
+    args = parser.parse_args(argv)
 
     ok = True
 
@@ -283,6 +320,9 @@ def cmd_doctor(argv: list[str]) -> int:
             except Exception as e:  # noqa: BLE001 — diagnostic command: report any failure, don't crash.
                 print_fail(f"Conectividade: falha de rede ({e})")
                 ok = False
+            else:
+                if args.check_provisioning:
+                    ok = _check_provisioning(client) and ok
 
     console.print(f"[muted]config[/muted]   {config.CONFIG_DIR}")
     try:
