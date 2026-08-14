@@ -188,6 +188,7 @@ def build_outcome(
     status: str,
     status_detail: dict | None,
     *,
+    since_ms: int | None = None,
     request_timeout: float | None = None,
 ) -> TaskOutcome:
     data = client.list_messages(
@@ -201,10 +202,25 @@ def build_outcome(
     error_detail = None
     structured_output = None
     for msg in messages:
+        if msg.get("type") != "structured_output_result":
+            continue
         candidate = msg.get("structured_output_result")
-        if msg.get("type") == "structured_output_result" and isinstance(candidate, dict):
-            structured_output = candidate
-            break
+        if not isinstance(candidate, dict):
+            continue
+        # Newest-first: this is the most recent structured_output_result in the
+        # window. If it predates this turn (extraction runs *after* the turn
+        # ends, so it can lag behind "stopped" by a few seconds), it belongs to
+        # an earlier turn on the same task_id — treat as "not landed yet" rather
+        # than acting on a stale decision from several turns ago.
+        if since_ms is not None:
+            try:
+                msg_ts = int(msg.get("timestamp"))
+            except (TypeError, ValueError):
+                msg_ts = None
+            if msg_ts is None or msg_ts <= since_ms:
+                break
+        structured_output = candidate
+        break
 
     if status == "error":
         for msg in messages:
@@ -253,7 +269,7 @@ def run_turn(
         if expect_structured:
             request_timeout = min(request_timeout, max(0.001, structured_deadline - time.monotonic()))
         outcome = build_outcome(
-            client, task_id, status, status_detail, request_timeout=request_timeout
+            client, task_id, status, status_detail, since_ms=since_ms, request_timeout=request_timeout
         )
         if not expect_structured or outcome.structured_output is not None:
             return outcome

@@ -498,6 +498,32 @@ class CodingAgentCliTests(IsolatedConfigTestCase):
         agent_class.return_value.run.assert_called_once_with("corrija o bug")
         client.close.assert_called_once()
 
+    @patch("manus_cli.cli.err_console")
+    @patch("sys.stdin")
+    @patch("manus_cli.cli.CodingAgent")
+    @patch("manus_cli.cli.WorkspaceTools")
+    @patch("manus_cli.cli._client")
+    def test_json_mode_prompts_for_missing_objective_on_stderr_not_stdout(
+        self, make_client, tools_class, agent_class, stdin_mock, err_console_mock
+    ):
+        # Regression: an interactive `manus code --json` with no prompt argument
+        # used to fall back to console.input() (stdout) for the objective prompt,
+        # breaking the tested "--json is exclusively JSON on stdout" guarantee.
+        stdin_mock.isatty.return_value = True
+        err_console_mock.input.return_value = "corrija o bug"
+        agent_class.return_value.run.return_value = AgentResult(
+            task_id="task-code", success=True, final_message="feito", validated=True
+        )
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            exit_code = cli.cmd_code(["--json", "--root", "."])
+
+        self.assertEqual(exit_code, 0)
+        err_console_mock.input.assert_called_once()
+        payload = json.loads(buf.getvalue())
+        self.assertTrue(payload["success"])
+        agent_class.return_value.run.assert_called_once_with("corrija o bug")
+
     @patch("manus_cli.cli._client")
     def test_code_rejects_invalid_limits_before_network(self, make_client):
         self.assertEqual(cli.cmd_code(["tarefa", "--max-steps", "0"]), 1)

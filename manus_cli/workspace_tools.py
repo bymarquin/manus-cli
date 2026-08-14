@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import shutil
 import signal
 import subprocess
 import tempfile
@@ -327,14 +328,37 @@ class WorkspaceTools:
         _atomic_write_bytes(path, encoded, path.stat().st_mode)
         return ToolResult(True, "trecho substituído", {"path": rel.as_posix(), "occurrences": actual})
 
+    def _resolve_bare_executable(self, name: str) -> tuple[Path | None, str | None]:
+        """Resolve a bare (no path separator) command name against a
+        workspace-excluded PATH, instead of handing the OS its own ambient search
+        order. On Windows, CreateProcess checks the *current directory* before PATH
+        for a bare name — a file just written into the workspace (e.g. "git.bat")
+        could otherwise shadow the real global tool and run in its place.
+        """
+        sanitized_path = _sanitized_environment(self.root).get("PATH", "")
+        found = shutil.which(name, path=sanitized_path)
+        if found is None:
+            return None, f"comando não encontrado: {name}"
+        resolved = Path(found).resolve()
+        if resolved == self.root or self.root in resolved.parents:
+            # shutil.which prepends the process's current directory on Windows
+            # regardless of the path= override — refuse rather than risk running a
+            # workspace-planted file under a trusted name.
+            return None, f"comando '{name}' resolveria para dentro do workspace; recusado"
+        return resolved, None
+
     def _git_diff(self, arguments: dict) -> ToolResult:
         staged = arguments.get("staged", False)
         if not isinstance(staged, bool):
             return ToolResult(False, "staged precisa ser boolean")
-        status = self.command_runner.run(["git", "status", "--short"], self.root, self.command_timeout)
+        git, error = self._resolve_bare_executable("git")
+        if git is None:
+            assert error is not None
+            return ToolResult(False, error)
+        status = self.command_runner.run([str(git), "status", "--short"], self.root, self.command_timeout)
         if not status.ok:
             return status
-        argv = ["git", "diff"] + (["--cached"] if staged else [])
+        argv = [str(git), "diff"] + (["--cached"] if staged else [])
         diff = self.command_runner.run(argv, self.root, self.command_timeout)
         if not diff.ok:
             return diff
@@ -366,6 +390,13 @@ class WorkspaceTools:
             self._assert_inside(resolved_executable)
             if not resolved_executable.is_file():
                 return ToolResult(False, "executável local não é arquivo")
+            argv = [str(resolved_executable), *argv[1:]]
+        else:
+            bare_resolved, error = self._resolve_bare_executable(argv[0])
+            if bare_resolved is None:
+                assert error is not None
+                return ToolResult(False, error)
+            argv = [str(bare_resolved), *argv[1:]]
         result = self.command_runner.run(argv, cwd, timeout)
         metadata = dict(result.metadata)
         metadata["cwd"] = rel.as_posix()

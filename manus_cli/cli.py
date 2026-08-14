@@ -511,7 +511,10 @@ def cmd_code(argv: list[str]) -> int:
     if not objective and not sys.stdin.isatty():
         objective = sys.stdin.read().strip()
     if not objective and sys.stdin.isatty():
-        objective = console.input("Objetivo de programação: ").strip()
+        # err_console, not console: --json promises stdout is exclusively JSON, and
+        # this prompt must not leak onto it if someone runs `manus code --json`
+        # interactively without a prompt argument.
+        objective = err_console.input("Objetivo de programação: ").strip()
     if not objective:
         print_fail("Informe o objetivo: manus code \"corrija os testes\"")
         return 1

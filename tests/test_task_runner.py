@@ -134,6 +134,42 @@ class BuildOutcomeTests(unittest.TestCase):
 
         self.assertIsNone(outcome.structured_output)
 
+    def test_structured_output_from_an_earlier_turn_is_not_mistaken_for_the_current_one(self):
+        # Regression: structured_output_result is extracted *after* the turn ends, so
+        # it can lag "stopped". In a multi-turn task_id (exactly what the coding agent
+        # does across steps), the last-50-messages window can still contain the
+        # PREVIOUS turn's result while the current turn's hasn't landed yet. Picking
+        # the newest-of-type without checking recency would replay a stale decision.
+        client = MagicMock()
+        stale_result = {"success": True, "value": {"kind": "final", "summary": "turno antigo"}, "error": None}
+        client.list_messages.return_value = {
+            "messages": [
+                {"id": "a2", "type": "assistant_message", "assistant_message": {"content": "turno atual"}},
+                {"id": "s_old", "timestamp": "1000", "type": "structured_output_result",
+                 "structured_output_result": stale_result},
+            ]
+        }
+
+        outcome = tr.build_outcome(client, "t1", "stopped", None, since_ms=5000)
+
+        self.assertIsNone(outcome.structured_output)
+        # content extraction is unaffected — only the (async, lagging) structured
+        # output is subject to the recency check.
+        self.assertEqual(outcome.content, "turno atual")
+
+    def test_structured_output_newer_than_since_ms_is_accepted(self):
+        client = MagicMock()
+        result = {"success": True, "value": {"kind": "final"}, "error": None}
+        client.list_messages.return_value = {
+            "messages": [
+                {"id": "s_new", "timestamp": "9000", "type": "structured_output_result", "structured_output_result": result}
+            ]
+        }
+
+        outcome = tr.build_outcome(client, "t1", "stopped", None, since_ms=5000)
+
+        self.assertEqual(outcome.structured_output, result)
+
 
 class TaskOutcomeConfirmVsReplyTests(unittest.TestCase):
     def test_needs_confirm_for_non_message_ask_user(self):
@@ -195,7 +231,8 @@ class RunTurnTests(unittest.TestCase):
             ]),
             {"messages": [{"id": "a1", "type": "assistant_message", "assistant_message": {"content": "feito"}}]},
             {"messages": [
-                {"id": "o1", "type": "structured_output_result", "structured_output_result": result},
+                {"id": "o1", "timestamp": "999999999999999", "type": "structured_output_result",
+                 "structured_output_result": result},
                 {"id": "a1", "type": "assistant_message", "assistant_message": {"content": "feito"}},
             ]},
         ]
@@ -208,6 +245,36 @@ class RunTurnTests(unittest.TestCase):
                 structured_output_schema={"type": "object"},
             )
         self.assertEqual(outcome.structured_output, result)
+
+    def test_run_turn_keeps_polling_past_a_stale_structured_output_from_a_previous_turn(self):
+        # End-to-end regression for the same-task_id multi-turn scenario: the first
+        # poll only sees the PREVIOUS turn's structured_output_result still sitting
+        # in the window (extraction for the current turn hasn't landed yet). run_turn
+        # must keep waiting instead of returning that stale decision.
+        client = MagicMock()
+        stale = {"success": True, "value": {"kind": "action", "summary": "turno anterior"}, "error": None}
+        fresh = {"success": True, "value": {"kind": "final", "summary": "turno atual"}, "error": None}
+        client.list_messages.side_effect = [
+            _page([
+                {"id": "s1", "timestamp": "999999999999999", "type": "status_update",
+                 "status_update": {"agent_status": "stopped"}}
+            ]),
+            {"messages": [
+                {"id": "a1", "type": "assistant_message", "assistant_message": {"content": "feito"}},
+                {"id": "s_old", "timestamp": "1000", "type": "structured_output_result",
+                 "structured_output_result": stale},
+            ]},
+            {"messages": [
+                {"id": "s_new", "timestamp": "999999999999999", "type": "structured_output_result",
+                 "structured_output_result": fresh},
+                {"id": "a1", "type": "assistant_message", "assistant_message": {"content": "feito"}},
+            ]},
+        ]
+        with patch("manus_cli.task_runner.time.sleep"):
+            outcome = tr.run_turn(
+                client, "existing-task", "continua", timeout=5, structured_output_schema={"type": "object"}
+            )
+        self.assertEqual(outcome.structured_output, fresh)
 
 
 class ConfirmActionTests(unittest.TestCase):

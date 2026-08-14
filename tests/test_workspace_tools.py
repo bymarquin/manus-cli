@@ -4,6 +4,7 @@ import os
 import tempfile
 import time
 import unittest
+import unittest.mock
 from pathlib import Path
 
 from manus_cli.workspace_tools import SubprocessCommandRunner, ToolResult, WorkspaceTools
@@ -102,10 +103,43 @@ class WorkspaceToolsTests(unittest.TestCase):
         )
         self.assertTrue(result.ok)
         argv, cwd, timeout = self.runner.calls[-1]
-        self.assertEqual(argv, ["git", "status"])
+        # argv[0] is resolved to an absolute path outside the workspace (see
+        # test_bare_command_is_resolved_off_a_workspace_excluded_path) — assert on
+        # the parts that matter here instead of exact argv equality.
+        self.assertTrue(Path(argv[0]).is_absolute())
+        self.assertEqual(Path(argv[0]).stem.lower(), "git")
+        self.assertEqual(argv[1:], ["status"])
         self.assertEqual(cwd, (self.root / "src").resolve())
         self.assertEqual(timeout, 12)
         self.assertEqual(result.metadata["cwd"], "src")
+
+    def test_bare_command_is_resolved_off_a_workspace_excluded_path(self):
+        result = self.tools.execute("run_command", {"argv": ["git", "status"], "cwd": "."})
+        self.assertTrue(result.ok)
+        argv, _cwd, _timeout = self.runner.calls[-1]
+        resolved = Path(argv[0])
+        self.assertTrue(resolved.is_absolute())
+        self.assertNotEqual(resolved, self.root)
+        self.assertNotIn(self.root, resolved.parents)
+
+    def test_unknown_bare_command_is_reported_not_silently_skipped(self):
+        result = self.tools.execute("run_command", {"argv": ["this-command-does-not-exist-anywhere"], "cwd": "."})
+        self.assertFalse(result.ok)
+        self.assertIn("não encontrado", result.content)
+        self.assertEqual(self.runner.calls, [])
+
+    def test_bare_command_shadowed_by_a_workspace_planted_file_is_refused(self):
+        # Simulates what shutil.which resolves to on Windows, where it always
+        # prepends the process's own current directory before searching PATH —
+        # regardless of the sanitized path= override. A planted "git" in the
+        # workspace root must never be handed to the command runner as-is.
+        planted = self.root / "git"
+        planted.write_text("#!/bin/sh\necho pwned\n")
+        with unittest.mock.patch("manus_cli.workspace_tools.shutil.which", return_value=str(planted)):
+            result = self.tools.execute("run_command", {"argv": ["git", "status"], "cwd": "."})
+        self.assertFalse(result.ok)
+        self.assertIn("workspace", result.content)
+        self.assertEqual(self.runner.calls, [])
 
     def test_local_executable_must_exist_inside_workspace(self):
         local_bin = self.root / ".venv" / "bin"
@@ -128,8 +162,18 @@ class WorkspaceToolsTests(unittest.TestCase):
     def test_git_diff_uses_read_only_commands(self):
         result = self.tools.execute("git_diff", {})
         self.assertTrue(result.ok)
-        self.assertEqual(self.runner.calls[0][0], ["git", "status", "--short"])
-        self.assertEqual(self.runner.calls[1][0], ["git", "diff"])
+        first_argv = self.runner.calls[0][0]
+        second_argv = self.runner.calls[1][0]
+        self.assertEqual(Path(first_argv[0]).stem.lower(), "git")
+        self.assertEqual(first_argv[1:], ["status", "--short"])
+        self.assertEqual(second_argv, [first_argv[0], "diff"])
+
+    def test_git_diff_reports_missing_git_instead_of_crashing(self):
+        with unittest.mock.patch("manus_cli.workspace_tools.shutil.which", return_value=None):
+            result = self.tools.execute("git_diff", {})
+        self.assertFalse(result.ok)
+        self.assertIn("não encontrado", result.content)
+        self.assertEqual(self.runner.calls, [])
 
 
 class SubprocessCommandRunnerTests(unittest.TestCase):
