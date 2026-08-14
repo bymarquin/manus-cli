@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
 import os
 import re
@@ -271,10 +272,8 @@ def _check_provisioning(client: ManusClient) -> bool:
         )
         return False
     print_success(f"Provisionamento: task criada e confirmada (task_id={task_id})")
-    try:
+    with contextlib.suppress(ManusAPIError):
         client.delete_task(task_id)
-    except ManusAPIError:
-        pass
     return True
 
 
