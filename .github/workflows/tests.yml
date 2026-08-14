@@ -26,7 +26,7 @@ jobs:
         shell: bash
         run: |
           set +e
-          python -m unittest discover -s tests -v 2>&1 | tee unittest.log
+          python -m unittest discover -s tests -v -f 2>&1 | tee unittest.log
           status=${PIPESTATUS[0]}
           if [ "$status" -ne 0 ]; then
             details=$(tail -n 100 unittest.log)
