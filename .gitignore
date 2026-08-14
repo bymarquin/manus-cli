@@ -6,6 +6,7 @@ manus-output/
 build/
 dist/
 node_modules/
+skill-observations/
 # binários nativos são gerados pelo CI de release, nunca commitados
 npm/manus-cli-darwin-arm64/bin/
 npm/manus-cli-darwin-x64/bin/

@@ -10,6 +10,7 @@ from .api import ManusAPIError, ManusClient
 # requisição. Sem essa folga, um erro de rede bem na borda do timeout vazava cru
 # pro chamador em vez do TaskTimeoutError previsível.
 _DEADLINE_EPSILON_S = 0.05
+_STRUCTURED_OUTPUT_GRACE_S = 10.0
 
 TERMINAL_STATUSES = ("stopped", "waiting", "error")
 
@@ -43,6 +44,7 @@ class TaskOutcome:
     attachments: list[dict] = field(default_factory=list)
     status_detail: dict | None = None
     error_detail: dict | None = None
+    structured_output: dict | None = None
 
     @property
     def needs_confirm(self) -> bool:
@@ -189,7 +191,7 @@ def build_outcome(
     request_timeout: float | None = None,
 ) -> TaskOutcome:
     data = client.list_messages(
-        task_id, limit=10, order="desc", verbose=True, request_timeout=request_timeout
+        task_id, limit=50, order="desc", verbose=True, request_timeout=request_timeout
     )
     messages = data.get("messages") or []
     entry = last_assistant_entry(messages)
@@ -197,6 +199,13 @@ def build_outcome(
     attachments = entry.get("attachments") if entry else None
 
     error_detail = None
+    structured_output = None
+    for msg in messages:
+        candidate = msg.get("structured_output_result")
+        if msg.get("type") == "structured_output_result" and isinstance(candidate, dict):
+            structured_output = candidate
+            break
+
     if status == "error":
         for msg in messages:
             if msg.get("type") == "error_message":
@@ -210,6 +219,7 @@ def build_outcome(
         attachments=attachments or [],
         status_detail=status_detail,
         error_detail=error_detail,
+        structured_output=structured_output,
     )
 
 
@@ -233,10 +243,24 @@ def run_turn(
     status, status_detail = poll_until_settled(
         client, task_id, since_ms, timeout, on_event=on_event, deadline=deadline
     )
-    remaining = deadline - time.monotonic()
-    if remaining <= 0:
-        raise TaskTimeoutError(f"Tarefa {task_id} não concluiu em {timeout}s")
-    return build_outcome(client, task_id, status, status_detail, request_timeout=remaining)
+    expect_structured = bool(create_kwargs.get("structured_output_schema")) and status == "stopped"
+    structured_deadline = min(deadline, time.monotonic() + _STRUCTURED_OUTPUT_GRACE_S)
+    while True:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise TaskTimeoutError(f"Tarefa {task_id} não concluiu em {timeout}s")
+        request_timeout = remaining
+        if expect_structured:
+            request_timeout = min(request_timeout, max(0.001, structured_deadline - time.monotonic()))
+        outcome = build_outcome(
+            client, task_id, status, status_detail, request_timeout=request_timeout
+        )
+        if not expect_structured or outcome.structured_output is not None:
+            return outcome
+        wait = structured_deadline - time.monotonic()
+        if wait <= 0:
+            return outcome
+        time.sleep(min(0.5, wait))
 
 
 def confirm_action(client: ManusClient, task_id: str, event_id: str, input_data: dict | None = None) -> dict:

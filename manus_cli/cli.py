@@ -10,9 +10,12 @@ from pathlib import Path
 from prompt_toolkit import PromptSession
 from prompt_toolkit.completion import Completer, Completion
 from prompt_toolkit.styles import Style
+from rich.markup import escape
 
 from . import config, files, task_runner
+from .agent_policy import ApprovalMode, PolicyEngine
 from .api import AGENT_PROFILES, SHARE_VISIBILITIES, ManusAPIError, ManusClient
+from .coding_agent import AgentStep, CodingAgent, ManusCodingAdapter
 from .config import ConfigError
 from .render import (
     PROMPT,
@@ -33,6 +36,7 @@ from .render import (
     print_warning,
     progress_label,
 )
+from .workspace_tools import WorkspaceTools
 
 OUTPUT_DIR = Path("manus-output")
 
@@ -438,6 +442,128 @@ def cmd_project(argv: list[str]) -> int:
             return 1
         print_projects(data.get("data", []))
     return 0
+
+
+class _ConsoleApproval:
+    def __init__(self, *, yes: bool, interactive: bool | None = None):
+        self.yes = yes
+        self.interactive = sys.stdin.isatty() if interactive is None else interactive
+
+    def approve(self, tool: str, arguments: dict, reason: str) -> bool:
+        if self.yes:
+            return True
+        preview = _approval_preview(tool, arguments)
+        if not self.interactive:
+            print_warning(f"ação exige confirmação e stdin não é interativo: {preview} ({reason})")
+            return False
+        err_console.print(f"[warning]Aprovação necessária:[/warning] {preview}")
+        err_console.print(f"[muted]{reason}[/muted]")
+        answer = err_console.input("Permitir? [y/N] ")
+        return answer.strip().lower() in {"y", "yes", "s", "sim"}
+
+
+def _approval_preview(tool: str, arguments: dict) -> str:
+    if tool == "run_command":
+        argv = arguments.get("argv")
+        if isinstance(argv, list):
+            return f"run_command {json.dumps(argv, ensure_ascii=False)}"
+    path = arguments.get("path")
+    return f"{tool} {path}" if isinstance(path, str) else tool
+
+
+def _print_agent_step(step: AgentStep) -> None:
+    marker = "success" if step.ok else "warning"
+    status = "ok" if step.ok else "falhou"
+    console.print(
+        f"[{marker}]{step.number}. {escape(step.tool)}[/{marker}] {status} "
+        f"[muted]— {escape(step.summary)}[/muted]"
+    )
+
+
+def cmd_code(argv: list[str]) -> int:
+    parser = argparse.ArgumentParser(
+        prog="manus code",
+        description="Agente local de programação: lê, edita e valida código dentro do workspace",
+    )
+    parser.add_argument("prompt", nargs="*")
+    parser.add_argument("--root", default=".", help="raiz confinada do workspace (padrão: diretório atual)")
+    parser.add_argument("--max-steps", type=int, default=30)
+    parser.add_argument("--command-timeout", type=float, default=120)
+    parser.add_argument("--timeout", type=float, default=300, help="timeout de cada turno Manus")
+    parser.add_argument(
+        "--approval",
+        choices=[mode.value for mode in ApprovalMode],
+        default=ApprovalMode.BALANCED.value,
+    )
+    parser.add_argument("--yes", action="store_true", help="aprova ações confirmáveis; bloqueios duros continuam ativos")
+    parser.add_argument("--json", dest="json_output", action="store_true")
+    parser.add_argument("--agent-profile", choices=AGENT_PROFILES, default=None)
+    args = parser.parse_args(argv)
+
+    if not 1 <= args.max_steps <= 100:
+        print_fail("--max-steps precisa estar entre 1 e 100")
+        return 1
+    if args.command_timeout <= 0 or args.timeout <= 0:
+        print_fail("timeouts precisam ser positivos")
+        return 1
+
+    objective = " ".join(args.prompt).strip()
+    if not objective and not sys.stdin.isatty():
+        objective = sys.stdin.read().strip()
+    if not objective and sys.stdin.isatty():
+        objective = console.input("Objetivo de programação: ").strip()
+    if not objective:
+        print_fail("Informe o objetivo: manus code \"corrija os testes\"")
+        return 1
+
+    try:
+        tools = WorkspaceTools(
+            Path(args.root),
+            command_timeout=args.command_timeout,
+        )
+    except (OSError, ValueError) as exc:
+        print_fail(str(exc))
+        return 1
+
+    client = _client()
+    try:
+        agent = CodingAgent(
+            ManusCodingAdapter(client),
+            tools,
+            PolicyEngine(ApprovalMode(args.approval)),
+            _ConsoleApproval(yes=args.yes),
+            max_steps=args.max_steps,
+            turn_timeout=args.timeout,
+            agent_profile=args.agent_profile,
+            on_step=None if args.json_output else _print_agent_step,
+        )
+        try:
+            result = agent.run(objective)
+        except KeyboardInterrupt:
+            if args.json_output:
+                print(json.dumps({"success": False, "error": "cancelado pelo usuário"}, ensure_ascii=False))
+            else:
+                print_warning("cancelado pelo usuário")
+            return 130
+    finally:
+        client.close()
+
+    if result.task_id:
+        config.save_last_task(result.task_id)
+    if args.json_output:
+        print(json.dumps(result.to_dict(), ensure_ascii=False))
+        return 0 if result.success else 1
+
+    if result.success:
+        print_success("Agente concluiu")
+        print_assistant(result.final_message)
+    else:
+        print_fail(result.error or result.final_message)
+    if result.changed_files:
+        console.print(f"[muted]arquivos alterados: {', '.join(result.changed_files)}[/muted]")
+    if not result.validated:
+        print_warning("resultado não validado por comando de teste/build bem-sucedido")
+    return 0 if result.success else 1
 
 
 # ---------------------------------------------------------------------------
@@ -964,6 +1090,7 @@ _SUBCOMMANDS = {
     "delete": cmd_delete,
     "update": cmd_update,
     "project": cmd_project,
+    "code": cmd_code,
 }
 
 

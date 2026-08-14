@@ -13,6 +13,7 @@ from prompt_toolkit.document import Document
 
 from manus_cli import cli
 from manus_cli.api import ManusAPIError
+from manus_cli.coding_agent import AgentResult
 
 
 class ExtractMentionsTests(IsolatedConfigTestCase):
@@ -469,6 +470,50 @@ class SubcommandArgparseTests(unittest.TestCase):
         with self.assertRaises(SystemExit) as ctx:
             cli.cmd_connector(["bogus"])
         self.assertEqual(ctx.exception.code, 2)
+
+
+class CodingAgentCliTests(IsolatedConfigTestCase):
+    @patch("manus_cli.cli.CodingAgent")
+    @patch("manus_cli.cli.WorkspaceTools")
+    @patch("manus_cli.cli._client")
+    def test_code_wires_balanced_mode_and_json_stdout(self, make_client, tools_class, agent_class):
+        client = make_client.return_value
+        agent_class.return_value.run.return_value = AgentResult(
+            task_id="task-code",
+            success=True,
+            final_message="feito",
+            changed_files=["app.py"],
+            validated=True,
+        )
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            exit_code = cli.cmd_code(["corrija", "o bug", "--json", "--root", "."])
+
+        self.assertEqual(exit_code, 0)
+        payload = json.loads(buf.getvalue())
+        self.assertTrue(payload["success"])
+        self.assertEqual(payload["changed_files"], ["app.py"])
+        self.assertEqual(agent_class.call_args.args[2].mode.value, "balanced")
+        self.assertIsNone(agent_class.call_args.kwargs["on_step"])
+        agent_class.return_value.run.assert_called_once_with("corrija o bug")
+        client.close.assert_called_once()
+
+    @patch("manus_cli.cli._client")
+    def test_code_rejects_invalid_limits_before_network(self, make_client):
+        self.assertEqual(cli.cmd_code(["tarefa", "--max-steps", "0"]), 1)
+        self.assertEqual(cli.cmd_code(["tarefa", "--command-timeout", "0"]), 1)
+        make_client.assert_not_called()
+
+    def test_noninteractive_approval_denies_without_yes(self):
+        approval = cli._ConsoleApproval(yes=False, interactive=False)
+        self.assertFalse(approval.approve("run_command", {"argv": ["npm", "install"]}, "instalação"))
+
+    def test_yes_approval_accepts_confirmable_action(self):
+        approval = cli._ConsoleApproval(yes=True, interactive=False)
+        self.assertTrue(approval.approve("run_command", {"argv": ["npm", "install"]}, "instalação"))
+
+    def test_code_is_registered_as_subcommand(self):
+        self.assertIs(cli._SUBCOMMANDS["code"], cli.cmd_code)
 
 
 if __name__ == "__main__":

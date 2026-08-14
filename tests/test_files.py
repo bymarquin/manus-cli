@@ -20,6 +20,11 @@ class LooksLikeSecretTests(unittest.TestCase):
         self.assertTrue(F.looks_like_secret(Path("home/user/.ssh/config")))
         self.assertTrue(F.looks_like_secret(Path("home/user/.aws/credentials")))
 
+    def test_secret_matching_is_case_insensitive(self):
+        self.assertTrue(F.looks_like_secret(Path(".ENV")))
+        self.assertTrue(F.looks_like_secret(Path("config/CREDENTIALS.JSON")))
+        self.assertTrue(F.looks_like_secret(Path(".SSH/config")))
+
     def test_does_not_flag_normal_files(self):
         for name in ("app.py", "README.md", "package.json", "main.go"):
             with self.subTest(name=name):

@@ -5,7 +5,7 @@
 [![npm version](https://img.shields.io/npm/v/manus-cli.svg)](https://www.npmjs.com/package/manus-cli)
 [![license: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-CLI não-oficial para a [API do Manus](https://open.manus.ai/docs/v2/introduction) (v2). Cria e acompanha tarefas do Manus direto do terminal, com modo chat contínuo, autocomplete de `/` comandos e `@` arquivos, upload seguro de projetos inteiros e download automático de anexos.
+CLI não-oficial para a [API do Manus](https://open.manus.ai/docs/v2/introduction) (v2). Cria e acompanha tarefas do Manus direto do terminal e também funciona como agente local de programação, com edição confinada ao repositório, execução controlada de testes/comandos, autocomplete, upload seguro e download automático de anexos.
 
 ```
 $ manus
@@ -111,6 +111,11 @@ manus project list                   # projetos da conta (id, nome, instrução)
 manus --in-project Backend "prompt"  # cria a tarefa já associada a esse projeto (aplica a instrução dele)
 manus --agent-profile manus-1.6-max "prompt"  # tier de capacidade da tarefa (manus-1.6 | manus-1.6-lite | manus-1.6-max)
 
+manus code "corrija os testes quebrados"       # agente local: lê, edita e valida o repositório atual
+manus code "implemente X" --root ./backend     # confina leitura/escrita ao diretório informado
+manus code "implemente X" --approval supervised  # confirma toda escrita e comando
+manus code "implemente X" --yes                # aprova ações confirmáveis; bloqueios duros permanecem
+
 git diff | manus "revisa isso"       # lê stdin como parte do prompt
 manus --json "prompt"                # stdout é só uma linha JSON, pra scripts
 ```
@@ -118,6 +123,22 @@ manus --json "prompt"                # stdout é só uma linha JSON, pra scripts
 Variável `MANUS_API_KEY` tem prioridade sobre a key salva em disco (útil em CI). Flags úteis: `--timeout <s>` (padrão 300), `--allow-secret` (desliga o filtro de segredo), `--no-gitignore`, `--in-project`/`--agent-profile` (só têm efeito ao criar uma tarefa nova — ignoradas em `--continue`/`--task`).
 
 Anexos que o Manus devolver na resposta vão automaticamente pra `./manus-output/<task_id>/` (nunca sobrescreve, nunca passa de 200MB por arquivo).
+
+## Agente de programação (`manus code`)
+
+`manus code` mantém um loop entre o Manus e ferramentas locais. Em cada turno, o Manus escolhe uma ação estruturada; o CLI valida a ação, aplica a política, executa no workspace e devolve o resultado real ao mesmo task. O agente pode listar/buscar/ler arquivos, criar ou editar texto, inspecionar `git diff` e rodar comandos de validação.
+
+O padrão `--approval balanced` permite automaticamente leitura, escrita confinada e verificações conhecidas. Instalação, rede e outras ações de risco pedem confirmação. Publicação, `git push`, mutações destrutivas do Git, shells indiretos, segredos, `.git`, caminhos absolutos e traversal com `..` são bloqueados. Modos disponíveis:
+
+| modo | comportamento |
+|---|---|
+| `balanced` | padrão recomendado; edita e testa, confirma ações de risco |
+| `supervised` | confirma toda escrita e todo comando |
+| `autonomous` | executa ações confirmáveis sem prompt, mantendo bloqueios duros |
+
+Flags úteis: `--max-steps 30`, `--command-timeout 120`, `--timeout 300` (por turno Manus), `--json` e `--agent-profile`.
+
+**Limite de segurança importante:** caminhos de arquivo são realmente confinados ao workspace e comandos usam `argv` com `shell=False`, mas um teste/build é código do próprio repositório e roda com as permissões do seu usuário. Use `manus code` somente em repositórios confiáveis; isso não é uma sandbox de sistema operacional.
 
 **Exit codes** — nunca retorna `0` silenciosamente quando a tarefa não terminou bem:
 

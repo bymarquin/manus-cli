@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import time
 import unittest
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 from manus_cli import task_runner as tr
 from manus_cli.api import ManusAPIError
@@ -104,6 +104,36 @@ class BuildOutcomeTests(unittest.TestCase):
         self.assertEqual(outcome.error_detail, {"error_type": "x", "content": "deu ruim"})
         self.assertEqual(outcome.status, "error")
 
+    def test_structured_output_is_exposed(self):
+        client = MagicMock()
+        result = {"success": True, "value": {"kind": "final"}, "error": None}
+        client.list_messages.return_value = {
+            "messages": [
+                {"id": "s1", "type": "structured_output_result", "structured_output_result": result},
+                {"id": "a1", "type": "assistant_message", "assistant_message": {"content": "feito"}},
+            ]
+        }
+
+        outcome = tr.build_outcome(client, "t1", "stopped", None)
+
+        self.assertEqual(outcome.structured_output, result)
+        self.assertEqual(outcome.content, "feito")
+        client.list_messages.assert_called_once_with(
+            "t1", limit=50, order="desc", verbose=True, request_timeout=None
+        )
+
+    def test_malformed_structured_output_is_ignored(self):
+        client = MagicMock()
+        client.list_messages.return_value = {
+            "messages": [
+                {"id": "s1", "type": "structured_output_result", "structured_output_result": "bad"}
+            ]
+        }
+
+        outcome = tr.build_outcome(client, "t1", "stopped", None)
+
+        self.assertIsNone(outcome.structured_output)
+
 
 class TaskOutcomeConfirmVsReplyTests(unittest.TestCase):
     def test_needs_confirm_for_non_message_ask_user(self):
@@ -153,6 +183,31 @@ class RunTurnTests(unittest.TestCase):
         self.assertEqual(outcome.task_id, "existing")
         client.create_task.assert_not_called()
         client.send_message.assert_called_once()
+
+    def test_structured_output_gets_short_grace_after_stopped(self):
+        client = MagicMock()
+        client.create_task.return_value = {"task_id": "newtask"}
+        result = {"success": True, "value": {"kind": "final"}, "error": None}
+        client.list_messages.side_effect = [
+            _page([
+                {"id": "s1", "timestamp": "999999999999999", "type": "status_update",
+                 "status_update": {"agent_status": "stopped"}}
+            ]),
+            {"messages": [{"id": "a1", "type": "assistant_message", "assistant_message": {"content": "feito"}}]},
+            {"messages": [
+                {"id": "o1", "type": "structured_output_result", "structured_output_result": result},
+                {"id": "a1", "type": "assistant_message", "assistant_message": {"content": "feito"}},
+            ]},
+        ]
+        with patch("manus_cli.task_runner.time.sleep"):
+            outcome = tr.run_turn(
+                client,
+                None,
+                "ola",
+                timeout=5,
+                structured_output_schema={"type": "object"},
+            )
+        self.assertEqual(outcome.structured_output, result)
 
 
 class ConfirmActionTests(unittest.TestCase):

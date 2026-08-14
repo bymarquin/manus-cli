@@ -27,9 +27,11 @@ MAX_TOTAL_BYTES = 500 * 1024 * 1024
 MAX_FILE_COUNT = 200
 
 def looks_like_secret(rel_path: Path) -> bool:
-    if any(part in SECRET_DIR_NAMES for part in rel_path.parts):
+    lowered_parts = tuple(part.lower() for part in rel_path.parts)
+    if any(part in SECRET_DIR_NAMES for part in lowered_parts):
         return True
-    return any(fnmatch.fnmatch(rel_path.name, pattern) for pattern in SECRET_NAME_PATTERNS)
+    lowered_name = rel_path.name.lower()
+    return any(fnmatch.fnmatch(lowered_name, pattern.lower()) for pattern in SECRET_NAME_PATTERNS)
 
 
 def is_rejected_type(path: Path) -> bool:

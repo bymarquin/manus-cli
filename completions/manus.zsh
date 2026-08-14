@@ -2,7 +2,7 @@
 
 _manus() {
     local -a subcommands flags
-    subcommands=(login use history open alias connector confirm doctor status result stop delete update project)
+    subcommands=(login use history open alias connector confirm doctor status result stop delete update project code)
     flags=(--continue --file --project --timeout --connector --json --task --allow-secret --dry-run --no-gitignore --in-project --agent-profile)
 
     if (( CURRENT == 2 )); then
@@ -29,6 +29,9 @@ _manus() {
             ;;
         update)
             compadd --title --share --hide --show
+            ;;
+        code)
+            compadd --root --max-steps --command-timeout --timeout --approval --yes --json --agent-profile
             ;;
         *)
             compadd -a flags

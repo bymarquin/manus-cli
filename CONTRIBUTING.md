@@ -8,6 +8,9 @@ Guia de desenvolvimento: estrutura do repositório, testes, empacotamento e o pr
 manus_cli/
   cli.py          # parsing (argparse por subcomando), dispatch, exit codes, REPL + autocomplete — fino, sem lógica de negócio
   task_runner.py  # create/send + poll, lifecycle (stopped/waiting/error), confirmAction
+  coding_agent.py # loop de programação, protocolo Structured Output e adapter Manus
+  agent_policy.py # classificação pura allow/confirm/deny para ações locais
+  workspace_tools.py # leitura/edição/execução confinada, adapters de subprocesso
   files.py        # seleção segura de arquivos (.gitignore, symlink, segredo, tamanho), upload/download em lote
   api.py          # só HTTP: auth, retry/backoff, validação de resposta
   config.py       # persistência atômica de credentials/state/.manusrc
@@ -16,6 +19,9 @@ tests/
   _helpers.py         # isola MANUS_CONFIG_DIR em temp dir — nenhum teste toca ~/.config/manus
   test_api.py         # retry policy, erros HTTP, download seguro, ciclo de vida do client
   test_task_runner.py # polling paginado, eventos malformados, timeout global, waiting/error/confirm
+  test_coding_agent.py # protocolo, loop, recuperação, limite e integração offline real
+  test_agent_policy.py # traversal/segredo/comandos e matriz de modos de aprovação
+  test_workspace_tools.py # contenção, edição atômica, busca, timeout e ambiente sanitizado
   test_files.py       # .gitignore, symlink, segredo, colisão de nome, limites, pacing de upload
   test_config.py      # escrita atômica, permissão, JSON corrompido, validação de .manusrc
   test_cli.py         # menções @, comandos /, resolução de connector/projeto, stop/delete/update/project, exit codes, disciplina do --json
@@ -47,7 +53,7 @@ docs/superpowers/specs/
 python -m unittest discover -s tests -v
 ```
 
-131 testes, todos com rede mockada via `httpx.MockTransport` ou client mockado (nada bate na API real) e config isolada em diretório temporário (nenhum teste toca `~/.config/manus`). Cobrem: retry idempotente vs. não-idempotente (o ponto mais importante — nunca duplicar `task.create`/`sendMessage`; `task.stop`/`delete`/`update` são idempotentes em efeito e retryam em falha ambígua), `429`+`Retry-After`+jitter, corpo HTTP inválido/inesperado, ciclo de vida `stopped`/`waiting`/`error`, `.gitignore`, symlink escapando da raiz, filtro de segredo (inclusive no autocomplete e em `@menção`), dropdown de `/` e `@`, fallback ASCII em consoles Windows, colisão de nome, limites de tamanho/quantidade, download seguro, config/`.manusrc` corrompidos, resolução de connector/projeto por nome, confirmação interativa de `delete`, e que `--json` só imprime JSON no stdout.
+172 testes, todos com rede mockada via `httpx.MockTransport` ou client mockado (nada bate na API real) e config isolada em diretório temporário (nenhum teste toca `~/.config/manus`). Cobrem: retry idempotente vs. não-idempotente (o ponto mais importante — nunca duplicar `task.create`/`sendMessage`; `task.stop`/`delete`/`update` são idempotentes em efeito e retryam em falha ambígua), `429`+`Retry-After`+jitter, corpo HTTP inválido/inesperado, ciclo de vida `stopped`/`waiting`/`error`, Structured Output, loop do agente local, política allow/confirm/deny, contenção de workspace, edição atômica, subprocesso com timeout/ambiente sanitizado, `.gitignore`, symlink escapando da raiz, filtro de segredo, dropdown de `/` e `@`, fallback ASCII no Windows, colisão de nome, limites, download seguro, config corrompida, resolução de connector/projeto, confirmações e disciplina do `--json`.
 
 Roda automaticamente no GitHub Actions a cada push/PR ([`tests.yml`](.github/workflows/tests.yml)): testes (Linux/macOS/Windows, Python 3.9 e 3.12), lint (`ruff`), tipagem (`mypy`) e build+smoke do wheel.
 

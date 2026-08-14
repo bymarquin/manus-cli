@@ -2,7 +2,7 @@ _manus_completions() {
     local cur prev subcommands flags
     cur="${COMP_WORDS[COMP_CWORD]}"
     prev="${COMP_WORDS[COMP_CWORD - 1]}"
-    subcommands="login use history open alias connector confirm doctor status result stop delete update project"
+    subcommands="login use history open alias connector confirm doctor status result stop delete update project code"
     flags="--continue --file --project --timeout --connector --json --task --allow-secret --dry-run --no-gitignore --in-project --agent-profile"
 
     if [ "$COMP_CWORD" -eq 1 ]; then
@@ -31,6 +31,9 @@ _manus_completions() {
             ;;
         update)
             COMPREPLY=($(compgen -W "--title --share --hide --show" -- "$cur"))
+            ;;
+        code)
+            COMPREPLY=($(compgen -W "--root --max-steps --command-timeout --timeout --approval --yes --json --agent-profile" -- "$cur"))
             ;;
         *)
             COMPREPLY=($(compgen -W "$flags" -- "$cur"))
