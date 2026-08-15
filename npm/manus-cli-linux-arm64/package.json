@@ -1,6 +1,6 @@
 {
   "name": "manus-cli-linux-arm64",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "description": "Bin\u00e1rio nativo do manus-cli para Linux (arm64)",
   "os": [
     "linux"
