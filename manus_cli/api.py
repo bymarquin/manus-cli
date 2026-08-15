@@ -247,8 +247,10 @@ class ManusClient:
         body: dict = {"message": message}
         if project_id:
             body["project_id"] = project_id
-        if agent_profile:
-            body["agent_profile"] = agent_profile
+        # Always send agent_profile explicitly (defaulting to the server's own
+        # documented default) rather than omitting it — omission has been observed
+        # to produce a task_id that never persists server-side.
+        body["agent_profile"] = agent_profile or "manus-1.6"
         if structured_output_schema:
             body["structured_output_schema"] = structured_output_schema
         kwargs = {"timeout": request_timeout} if request_timeout is not None else {}

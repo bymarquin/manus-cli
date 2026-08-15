@@ -12,6 +12,11 @@ from .api import ManusAPIError, ManusClient
 _DEADLINE_EPSILON_S = 0.05
 _STRUCTURED_OUTPUT_GRACE_S = 10.0
 
+# A task freshly returned by task.create can take a moment to become queryable —
+# task.listMessages briefly 404s ("not_found") on a task_id the create call just
+# handed back. Retry through that window instead of surfacing it as a hard failure.
+_TASK_NOT_FOUND_GRACE_S = 10.0
+
 TERMINAL_STATUSES = ("stopped", "waiting", "error")
 
 # https://open.manus.ai/docs/v2/task-lifecycle — waiting_for_event_type "messageAskUser"
@@ -123,6 +128,7 @@ def poll_until_settled(
     deadline = deadline if deadline is not None else time.monotonic() + timeout
     status: str | None = None
     status_detail: dict | None = None
+    poll_start = time.monotonic()
 
     while True:
         new_batch: list[dict] = []  # collected newest-first; reversed before dispatch
@@ -140,9 +146,12 @@ def poll_until_settled(
                     cursor=cursor,
                     request_timeout=remaining,
                 )
-            except ManusAPIError:
+            except ManusAPIError as exc:
                 if time.monotonic() >= deadline - _DEADLINE_EPSILON_S:
                     raise TaskTimeoutError(f"Tarefa {task_id} não concluiu em {timeout}s") from None
+                if exc.code == "not_found" and time.monotonic() - poll_start < _TASK_NOT_FOUND_GRACE_S:
+                    time.sleep(min(1.0, max(0.0, deadline - time.monotonic())))
+                    continue
                 raise
             messages = data.get("messages") or []
             reached_old = False

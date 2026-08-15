@@ -93,6 +93,32 @@ class PollUntilSettledTests(unittest.TestCase):
         status, _ = tr.poll_until_settled(client, "t", since_ms=0, timeout=2)
         self.assertEqual(status, "error")
 
+    def test_not_found_right_after_create_is_retried_within_grace_period(self):
+        client = MagicMock()
+        client.list_messages.side_effect = [
+            ManusAPIError("not_found", "task not found"),
+            ManusAPIError("not_found", "task not found"),
+            _page([{"id": "m1", "timestamp": "1000", "type": "status_update", "status_update": {"agent_status": "stopped"}}]),
+        ]
+        with patch("manus_cli.task_runner.time.sleep"):
+            status, _ = tr.poll_until_settled(client, "t", since_ms=0, timeout=5)
+        self.assertEqual(status, "stopped")
+        self.assertEqual(client.list_messages.call_count, 3)
+
+    def test_not_found_past_grace_period_still_raises(self):
+        client = MagicMock()
+        client.list_messages.side_effect = ManusAPIError("not_found", "task not found")
+        with patch("manus_cli.task_runner._TASK_NOT_FOUND_GRACE_S", 0.0), self.assertRaises(ManusAPIError):
+            tr.poll_until_settled(client, "t", since_ms=0, timeout=5)
+        self.assertEqual(client.list_messages.call_count, 1)
+
+    def test_non_not_found_error_is_not_retried(self):
+        client = MagicMock()
+        client.list_messages.side_effect = ManusAPIError("rate_limited", "too many requests")
+        with self.assertRaises(ManusAPIError):
+            tr.poll_until_settled(client, "t", since_ms=0, timeout=5)
+        self.assertEqual(client.list_messages.call_count, 1)
+
 
 class BuildOutcomeTests(unittest.TestCase):
     def test_error_status_surfaces_error_message(self):

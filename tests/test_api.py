@@ -366,5 +366,28 @@ class UploadFileTests(unittest.TestCase):
         self.assertEqual(bodies, [b"complete payload", b"complete payload"])
 
 
+class CreateTaskAgentProfileTests(unittest.TestCase):
+    """A task_id has been observed to never persist server-side when agent_profile
+    is omitted from task.create — always send it explicitly instead of relying on
+    the server to apply its own documented default."""
+
+    def _sent_body(self, **kwargs) -> dict:
+        captured = {}
+
+        def handler(request):
+            captured["body"] = json.loads(request.read())
+            return httpx.Response(200, json={"ok": True, "request_id": "r", "task_id": "t1"})
+
+        client = _mock_client(handler)
+        client.create_task("oi", **kwargs)
+        return captured["body"]
+
+    def test_agent_profile_defaults_to_manus_1_6_when_omitted(self):
+        self.assertEqual(self._sent_body()["agent_profile"], "manus-1.6")
+
+    def test_explicit_agent_profile_is_passed_through(self):
+        self.assertEqual(self._sent_body(agent_profile="manus-1.6-max")["agent_profile"], "manus-1.6-max")
+
+
 if __name__ == "__main__":
     unittest.main()
